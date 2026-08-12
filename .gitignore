@@ -44,3 +44,8 @@ example
 
 # port reference (copy of the old Swift catalog, deleted once ported)
 .reference/
+
+# The global ~/.gitignore ignores src/ and pkg/ (makepkg build dirs on Arch).
+# This project's entire React Native source lives in src/, so un-ignore it here.
+# Without this line the whole app is silently excluded from every commit.
+!src/

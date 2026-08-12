@@ -6,16 +6,41 @@ import Foundation
 /// directly, because iOS always delivers a widget tap to the widget's OWN host
 /// app. The host parses the link in `onOpenURL` and opens the real target.
 enum DeepLink {
-    static let scheme = "simplephone"
+    /// Deliberately NOT "simplephone": the original Swift app is still installed
+    /// on the same device and claims that scheme. Two installed apps registering
+    /// the same scheme is undefined behaviour — iOS picks one, and which one is
+    /// not something we get to decide. Keep this distinct from the old app's
+    /// scheme for as long as both can coexist on a device.
+    static let scheme = "simplephonern"
     static let host = "open"
     private static let queryKey = "u"
 
-    /// `simplephone://open?u=<app url>` — what a widget row points at.
+    /// RFC 3986 unreserved characters, and nothing else.
+    ///
+    /// Spelled out as literal ASCII rather than built from `.alphanumerics`,
+    /// because `.alphanumerics` is the full Unicode letter/digit set: it would
+    /// leave "é" in a target URL unescaped, and a non-ASCII byte assigned to
+    /// `percentEncodedQuery` makes `components.url` return nil, which the force
+    /// unwrap below turns into a crash inside the widget extension.
+    private static let unreserved = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+    )
+
+    /// `simplephonern://open?u=<percent-encoded app url>` — what a widget row points at.
     static func launchURL(for app: LauncherApp) -> URL {
         var components = URLComponents()
         components.scheme = scheme
         components.host = host
-        components.queryItems = [URLQueryItem(name: queryKey, value: app.urlString)]
+
+        // Not `queryItems`. That path encodes with `.urlQueryAllowed`, which
+        // permits ? & and = to pass through literally, so a target that carries
+        // its own query string (https://x.com/search?q=a&b=c) serialises into a
+        // query the parser can no longer split unambiguously and `target(from:)`
+        // hands back a truncated URL. Encoding every reserved character by hand
+        // leaves exactly one `=` and zero `&` in the string we produce.
+        let encoded = app.urlString.addingPercentEncoding(withAllowedCharacters: unreserved) ?? ""
+        components.percentEncodedQuery = "\(queryKey)=\(encoded)"
+
         return components.url!
     }
 

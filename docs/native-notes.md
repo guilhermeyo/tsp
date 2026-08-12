@@ -1,0 +1,450 @@
+# Native notes
+
+Teaching notes for the two native halves of this project: the WidgetKit extension in
+`targets/widget/`, and the local Expo module in `modules/launcher-native/`.
+
+The audience is someone comfortable with TypeScript who has not written iOS code recently, or an
+agent that needs to change one of these files without breaking the other. The README covers *what
+the contracts are*. This file covers *why the native code is shaped the way it is*.
+
+---
+
+# Part 1: WidgetKit
+
+## The mental model
+
+The wrong model, and the one every web developer starts with: "the widget is a small view of my app
+that stays on screen and updates."
+
+The right model: **the widget is a slideshow your app pre-renders, and the system decides when to
+advance it.**
+
+Your extension process is not alive while the widget is on screen. The system wakes it, asks a
+question, gets an answer, and kills it. What sits on the home screen is an archived view tree that
+the system can re-lay-out and re-tint without you. Battery is the reason. A hundred widgets running
+code all day would end the device.
+
+Three consequences follow, and everything else in this section is downstream of them:
+
+1. **You cannot push an update.** You can only ask the system to throw away what it has and ask you
+   again (`WidgetCenter.shared.reloadAllTimelines()`).
+2. **You have no persistent state.** Every wake-up starts from nothing. Anything the widget knows,
+   it read from disk during that wake-up.
+3. **You have a few seconds.** Not enough for a network request you did not plan for, and nowhere
+   near enough to boot a JavaScript engine.
+
+## `TimelineProvider` and `TimelineEntry`
+
+A `TimelineEntry` is one frame of the slideshow: a date, plus whatever data your view needs to
+render at that date. Ours is trivial:
+
+```swift
+// targets/widget/LauncherEntry.swift
+struct LauncherEntry: TimelineEntry {
+    let date: Date
+    let apps: [LauncherApp]
+    let theme: Theme
+}
+```
+
+A `TimelineProvider` is the object the system asks for those frames. It has exactly three methods,
+each answering a different question:
+
+| Method          | The system is asking                                            | Must be         |
+| --------------- | --------------------------------------------------------------- | --------------- |
+| `placeholder`   | "Draw something instantly, right now, I need a shape."           | Synchronous     |
+| `getSnapshot`   | "Draw one representative frame for the gallery or a transition." | Fast            |
+| `getTimeline`   | "Give me the frames and tell me when to come back."              | Can do real work|
+
+### Why `placeholder` uses defaults and `getSnapshot` reads disk
+
+This asymmetry in `targets/widget/LauncherProvider.swift` looks like a bug and is not:
+
+```swift
+func placeholder(in context: Context) -> LauncherEntry {
+    let config = LauncherConfig.default          // bundled defaults, no disk read
+    return LauncherEntry(date: Date(), apps: config.apps, theme: config.theme)
+}
+
+func getSnapshot(in context: Context, completion: @escaping (LauncherEntry) -> Void) {
+    completion(makeEntry())                      // ConfigStore.load(), reads the App Group
+}
+```
+
+`placeholder` runs in three situations where reading the user's data is either impossible or wrong:
+
+- **It must be synchronous.** There is no completion handler in the signature. It returns a value
+  directly. Anything slow blocks the UI that is trying to draw your widget's outline.
+- **It must be non-empty.** The system uses it to size and shape the redacted skeleton shown while
+  the widget loads. An empty list produces a collapsed, wrong-looking placeholder.
+- **It must not show user data.** The same placeholder is rendered in contexts where the user's
+  private content should not appear, and it may be rendered redacted, where real names would leak
+  through the shape of the layout.
+
+`getSnapshot` has none of those constraints. It gets a completion handler, so it can take its time,
+and it is meant to be representative, so real data is correct there.
+
+**Do not "clean this up" into a single `makeEntry()` used by all three methods.** That is the most
+tempting refactor in the file and it is wrong in both directions: `placeholder` would start reading
+disk synchronously, and it would show user data where it should not.
+
+## Why `policy: .never` is correct here, and only here
+
+```swift
+completion(Timeline(entries: [makeEntry()], policy: .never))
+```
+
+One entry, and a reload policy that means "do not come back on your own, ever."
+
+This widget shows a list of app names. Nothing about it changes with time. There is no countdown, no
+next-event, no stock price. A time-based refresh policy would burn the system's refresh budget to
+re-render identical pixels.
+
+**`.never` is correct only because something else triggers the reload.** `ConfigStore.save()` ends
+with:
+
+```swift
+WidgetCenter.shared.reloadAllTimelines()
+```
+
+and the React Native side calls the same thing through `LauncherNative.reloadWidget()` after every
+single write. **Those two halves must be ported together.** Drop the reload call and the widget
+freezes at whatever it last rendered, permanently, with no error and no way for the user to force a
+refresh short of removing and re-adding the widget.
+
+### The reload budget
+
+`reloadAllTimelines()` is a request, not a command. The system allocates a widget roughly **40 to 70
+refreshes per day**, and the exact number depends on how often the user looks at the widget, battery
+state, Low Power Mode, and how well-behaved the extension has been. Exceed it and your reload
+requests are quietly dropped or deferred, sometimes for hours.
+
+For this app that budget is generous. A user who edits their launcher 40 times in a day is doing
+something unusual. But it is a real ceiling, and it is why the Appearance screen's segmented control
+commits on **discrete tap** rather than continuous drag: a slider that fired a reload per frame
+would exhaust the day's budget in about two seconds, and then the widget would stop reflecting
+changes for everyone including the user who was not dragging anything.
+
+## `containerBackground(for: .widget)` is mandatory on iOS 17+
+
+```swift
+content.containerBackground(for: .widget) { theme.backgroundColor }
+```
+
+Before iOS 17, a widget painted its own background however it liked. Since iOS 17 (and this is
+enforced, not advisory), a widget must declare its background through this modifier so the system
+can remove or replace it: on the iPad Lock Screen, in StandBy, on the desktop in macOS, and anywhere
+else Apple decides a widget should be tinted or de-chromed.
+
+If you drop it, the widget does not fail to build. It renders **letterboxed inside a default system
+background**, and the theme's dark/light choice, the entire point of this app's Appearance screen,
+disappears. It looks like a layout bug and it is a missing modifier.
+
+## What `contentMarginsDisabled()` actually does
+
+Since iOS 17 the system applies default content margins to every widget, roughly 16 points on each
+side, so that third-party widgets line up with Apple's. `contentMarginsDisabled()` turns that off
+and gives you the full surface.
+
+This widget disables them, which means the bare `.padding()` inside `WidgetViews.swift` is the
+**only** inset in the entire layout. That makes the two modifiers a matched pair:
+
+- Drop `contentMarginsDisabled()` and the padding doubles. Large text gets cramped and the row limits
+  (1 / 3 / 6) stop fitting.
+- Drop the `.padding()` and text touches the widget edge.
+
+Both are one-line changes and both look like harmless cleanup. They are not.
+
+## The `kind` string must never change
+
+```swift
+StaticConfiguration(kind: "SimplePhoneLauncher", provider: LauncherProvider()) { ... }
+```
+
+`kind` is the widget's identity as far as the system is concerned. When a user drags your widget
+onto their home screen, iOS persists that string in its own database and uses it forever after to
+ask *which* widget it should be rendering.
+
+Rename it and every already-placed widget on every device goes blank or unconfigured. The user has
+to notice, delete it, and add it back. There is no migration API and no way to alias an old kind to
+a new one.
+
+`"SimplePhoneLauncher"` is inherited from the original Swift app, so widgets placed from that app
+keep working after installing this port. It is a permanent string. Treat it like a database column
+name in production.
+
+## Row limits and the family switch
+
+```swift
+switch family {
+case .systemSmall:  smallView            // apps.first only
+case .systemLarge:  listView(limit: 6)
+default:            listView(limit: 3)   // systemMedium, and anything else
+}
+```
+
+The limits 1 / 3 / 6 are hard-coded and do **not** react to the theme's text size. At `extraLarge`
+(44pt widget font), six rows on `systemLarge` only fit because `LauncherRowLabel` applies
+`minimumScaleFactor(0.5)` and lets long names shrink rather than truncate. Any change to the VStack
+spacing (16), the padding, the font sizes, or `fontWeight(.semibold)` shifts what actually fits.
+Re-check `systemLarge` at `extraLarge` with long app names after touching any of them.
+
+Also note that `default:` serves `systemMedium`. If you add `.accessoryRectangular` or
+`.systemExtraLarge` to `supportedFamilies` without extending the switch, those families silently
+render the 3-row layout at widget font sizes, which overflows badly on a Lock Screen accessory.
+
+## No `NSExtensionPrincipalClass`
+
+`targets/widget/Info.plist` declares only:
+
+```xml
+<key>NSExtension</key>
+<dict>
+  <key>NSExtensionPointIdentifier</key>
+  <string>com.apple.widgetkit-extension</string>
+</dict>
+```
+
+That is correct and complete for a SwiftUI extension whose entry point is `@main struct
+SimplePhoneWidgetBundle: WidgetBundle`. The `@main` attribute generates the entry point at compile
+time.
+
+Older Objective-C widget templates declare `NSExtensionPrincipalClass`, and copying that habit into
+a SwiftUI widget breaks the extension at launch, because the system then tries to instantiate a
+class that does not exist. Same for a storyboard key. Do not add either.
+
+---
+
+# Part 2: Expo Modules
+
+## What a local Expo module actually is
+
+`modules/launcher-native/` is a **local Expo module**: a small native library that lives in your
+project rather than in `node_modules`, and that Expo's autolinking picks up automatically.
+
+It is not a config plugin (those modify the generated Xcode project at prebuild time and run no
+device code). It is not the old React Native bridge module either, with its `RCT_EXPORT_METHOD`
+macros and its NSDictionary marshalling. It is a Swift class that declares its JS-facing API in a
+DSL:
+
+```swift
+public class LauncherNativeModule: Module {
+  public func definition() -> ModuleDefinition {
+    Name("LauncherNative")
+
+    Constants(["appGroupId": "group.com.guilherme44.simple-phone"])
+
+    Function("readConfigJSON") { () -> String? in ... }
+  }
+}
+```
+
+`definition()` is not executed like normal imperative code. It builds a description of the module
+that Expo's runtime reads to wire up the JS side. Argument types are inferred from the Swift closure
+signature and validated at the boundary, which is why there is no manual type-checking or unwrapping
+in the module body.
+
+### The three files, and what each one is for
+
+```
+modules/launcher-native/
+  expo-module.config.json         tells autolinking this module exists
+  index.ts                        the typed TypeScript facade
+  ios/
+    LauncherNative.podspec        tells CocoaPods how to compile the Swift
+    LauncherNativeModule.swift    the actual code
+```
+
+**`expo-module.config.json`** is the entry point for the whole mechanism:
+
+```json
+{ "platforms": ["apple"], "apple": { "modules": ["LauncherNativeModule"] } }
+```
+
+At prebuild, `expo-modules-autolinking` scans `node_modules` **and the local `modules/` directory**
+for this file. Every module it finds gets added to the generated Podfile and registered with the
+runtime. The `modules` array names the Swift **class**, and the name must match exactly, because
+that is the string the generated registration code uses.
+
+**The podspec** is ordinary CocoaPods: name, platform floor (`ios, '17.0'`, matching the widget),
+`dependency 'ExpoModulesCore'`, and `source_files`. Nothing Expo-specific. It exists because the
+generated Podfile needs a pod to point at.
+
+**`index.ts`** is the only file the rest of the app imports:
+
+```ts
+import { requireNativeModule } from 'expo';
+const LauncherNative = requireNativeModule<LauncherNativeModule>('LauncherNative');
+```
+
+`requireNativeModule` looks the module up **by the string passed to `Name(...)` in Swift**, not by
+the class name and not by the folder name. It returns the installed host object, and it throws
+immediately if the module is missing rather than handing back `undefined` for you to trip over
+later. Three different names are in play (folder, class, `Name(...)`) and only the last one is the
+lookup key.
+
+Wrapping it in a typed interface in `index.ts` is the only place TypeScript gets to know these
+functions exist. The native side cannot generate types for you.
+
+## `Function` vs `AsyncFunction`, and why it matters here
+
+This is the single most important thing to understand about the Expo Modules API, and it is one word
+of difference in the source.
+
+**`AsyncFunction`** returns a `Promise` in JavaScript. The work is dispatched to a module queue, off
+the JS thread, and the result is delivered back later. This is the safe default and the right choice
+for anything that can be slow: network, file I/O, image processing, database work.
+
+**`Function`** is **synchronous over JSI**. There is no Promise, no queue hop, no serialization
+round trip. JSI (JavaScript Interface) lets native code install real C++-backed host objects
+directly into the JS runtime's global scope, so calling one is a direct function call into native
+code on the JS thread, the way `Math.max` is:
+
+```ts
+const json = LauncherNative.readConfigJSON();  // a string, right now, not a Promise
+```
+
+The old React Native bridge could not do this at all. Every call was asynchronous message-passing
+over a serialized queue. JSI is what removed that constraint, and it is the core of the New
+Architecture (mandatory since SDK 55, so it is simply how things work now).
+
+### Why all four functions here are synchronous
+
+`readConfigJSON`, `writeConfigJSON`, `reloadWidget` and `resolvedFontFamily` are all declared with
+`Function`. That is deliberate, and it buys one specific thing.
+
+The original Swift app's `LauncherStore.init` called `ConfigStore.load()` synchronously. By the time
+the first view rendered, the config existed. There was no loading state, because there was no moment
+at which the config was unknown.
+
+Synchronous `Function` reproduces that exactly:
+
+```ts
+const [config] = useState(() => loadConfig());   // lazy initializer, runs during first render
+```
+
+No `useEffect`, no `loading` boolean, no splash screen held open, no flash of an empty list before
+the apps appear. The store is correct on the first frame.
+
+The cost is that these calls block the JS thread. That is acceptable **only** because of what they
+do: a `UserDefaults` read of a few kilobytes, backed by an in-memory cache that iOS has usually
+already faulted in. Sub-millisecond. If any of these ever grew to touch the network, decode an
+image, or scan a directory, it would need to become an `AsyncFunction`, and the store would need a
+loading state, and this whole paragraph would stop being true.
+
+**Rule of thumb:** `Function` for cheap, bounded, local work where synchronicity buys you a simpler
+architecture. `AsyncFunction` for everything else. When in doubt, `AsyncFunction`.
+
+## Why this module exists at all
+
+`@bacons/apple-targets` ships an `ExtensionStorage` module that almost does this job. Three reasons
+we do not use it, all of them worth understanding:
+
+1. **`setObject` round-trips through `JSONSerialization`,** which can coerce a JS boolean to `1`.
+   The full failure chain is in the README, and it ends with the user's entire app list silently
+   reset to defaults. This project passes a `String` across the boundary so that JavaScript owns the
+   exact bytes and nothing in the middle gets an opinion about them.
+2. **It cannot read the legacy `Data` value** the old Swift app wrote under `launcher_config`, which
+   is what makes the in-place upgrade work.
+3. **It has no font resolver.** React Native cannot express SwiftUI's `Font.Design`, so
+   `resolvedFontFamily` uses `UIFontDescriptor.withDesign(.rounded / .serif / .monospaced)`, the
+   public API that turns a design into a concrete family name RN can put in a `fontFamily` style.
+   Without it, the in-app widget preview renders in different typefaces than the real widget, which
+   defeats the point of having a preview.
+
+## App Groups from the native side
+
+An App Group is a **shared container**: a `UserDefaults` suite plus a shared filesystem directory
+that multiple binaries signed by the same team can both open, provided each one carries the
+`com.apple.security.application-groups` entitlement naming that group.
+
+```swift
+let defaults = UserDefaults(suiteName: "group.com.guilherme44.simple-phone") ?? .standard
+```
+
+Two things about that line are worth internalizing:
+
+**The initializer returns an optional, and `nil` is not an error you can inspect.** It fails when the
+suite name is malformed, or the process is not entitled to that group. You get `nil`. No `Error`, no
+`errno`, no log. That is why the fallback exists and why the failure is undetectable from inside the
+process, as described in the README.
+
+**Entitlements are a signing-time fact, not a runtime one.** The entitlement is baked into the
+signature by the provisioning profile. You cannot check for it, request it, or repair it at runtime.
+If the build was signed without it, the running binary simply cannot see the container, forever.
+This is the shape of most iOS capability failures: things degrade to silence rather than erroring,
+because the entitlement is verified before your code ever runs.
+
+Also worth knowing: `UserDefaults` is not a database. It is a plist that gets loaded into memory
+whole and written back whole, and it is intended for small values. One JSON config of a few
+kilobytes is exactly the intended use. A list of thousands of apps with per-app images would not be,
+and would want the shared *directory* half of the App Group instead.
+
+---
+
+# Part 3: Bare vs CNG, in 2026
+
+The terminology here is old and half of what you will find online is stale. Here is the current
+state.
+
+**"Bare workflow"** used to mean: you have `ios/` and `android/` directories committed to your repo,
+you open Xcode, you edit things there, and you own them from then on. The opposite was the "managed
+workflow", where you never saw native code at all and were limited to whatever Expo Go supported.
+
+**That dichotomy is gone.** It has not been how Expo works for several SDK cycles. What replaced it
+is **CNG: Continuous Native Generation.**
+
+CNG means the native projects are **build artifacts derived from a declarative spec**, exactly the
+way `node_modules` is derived from `package.json`:
+
+```
+app.json  +  config plugins  +  targets/  +  modules/
+                       |
+              npx expo prebuild
+                       |
+                       v
+                  ios/  (disposable)
+```
+
+You are not choosing between "managed" and "bare". You are choosing whether `ios/` is **input** or
+**output**. This project treats it as output, which means:
+
+- Everything that shapes the native project lives in a committed, reviewable, greppable file.
+- Regenerating from scratch is a normal operation, not a recovery procedure.
+- Upgrading the SDK does not mean hand-merging changes into a `.pbxproj` conflict.
+- **Anything you type into Xcode is temporary.** It survives until the next prebuild.
+
+The previous native version of this app already worked this way, with XcodeGen and a committed
+`project.yml` generating a gitignored `.xcodeproj`. Moving to Expo changed the generator, not the
+discipline.
+
+### Where custom native code goes under CNG
+
+The obvious objection is: if `ios/` is disposable, where does hand-written native code live? Three
+places, all committed, all outside `ios/`:
+
+| What you need                        | Where it goes             | Mechanism                    |
+| ------------------------------------ | ------------------------- | ---------------------------- |
+| A native module callable from JS     | `modules/<name>/`         | local Expo module, autolinked|
+| An app extension (widget, share, ...) | `targets/<name>/`         | `@bacons/apple-targets`      |
+| Xcode project or plist changes       | `app.json` or a plugin    | config plugins               |
+
+That covers essentially everything short of forking a third-party pod. If you find yourself needing
+a change none of the three can express, that is a signal to write a config plugin, not to start
+committing `ios/`.
+
+### One caveat this project actually hits
+
+Some settings genuinely live in files that prebuild owns. For example, the SDK 57 escape hatch for
+the Hermes V1 memory regression (Hermes V1 plus `react-native-reanimated` raises memory usage 25 to
+30 percent even when Reanimated is idle) is:
+
+```json
+// ios/Podfile.properties.json
+{ "expo.useHermesV1": "false" }
+```
+
+`ios/` is gitignored and regenerated, so editing that by hand lasts until the next prebuild. Making
+it stick means writing a small config plugin that patches `Podfile.properties.json` during prebuild.
+That is the CNG answer to every "but I need to change a generated file" question: do not change it,
+generate it differently.
