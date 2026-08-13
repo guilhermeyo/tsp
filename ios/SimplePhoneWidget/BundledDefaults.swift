@@ -8,7 +8,7 @@ import Foundation
 /// enabled, this list is only the first-run seed.
 enum BundledDefaults {
     static let apps: [LauncherApp] = [
-        LauncherApp(name: "mensagens", urlString: "messages://"),
+        LauncherApp(name: "mensagens", urlString: "ichat://"),
         LauncherApp(name: "whatsapp", urlString: "whatsapp://"),
         LauncherApp(name: "waze", urlString: "waze://"),
         LauncherApp(name: "música", urlString: "music://"),

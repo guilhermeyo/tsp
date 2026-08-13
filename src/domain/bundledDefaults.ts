@@ -18,7 +18,13 @@ import type { LauncherApp } from './types';
  * only the precomposed form matches the Swift literal.
  */
 const SEEDS: readonly Omit<LauncherApp, 'id'>[] = [
-  { name: 'mensagens', urlString: 'messages://' },
+  // ichat://, not sms:// or messages://. Tested on an iPhone 17 Pro running
+  // iOS 26.6: sms:// and messages:// both open the COMPOSE sheet with an empty
+  // To: field, while ichat:// opens Messages itself, restored to whatever the
+  // user was last looking at. Undocumented, and the only one that behaves like
+  // a launcher row should. The simulator disagrees, so do not "fix" this from
+  // simulator evidence.
+  { name: 'mensagens', urlString: 'ichat://' },
   { name: 'whatsapp', urlString: 'whatsapp://' },
   { name: 'waze', urlString: 'waze://' },
   { name: 'música', urlString: 'music://' },
