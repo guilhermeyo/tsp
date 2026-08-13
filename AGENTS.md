@@ -175,9 +175,42 @@ They look like bugs. They are faithful ports of deliberate behavior:
 ```bash
 npm install
 npx tsc --noEmit
+npm test
 cd ios && pod install && cd ..    # only after a JS dependency change
 npx expo run:ios
 ```
+
+### Tests
+
+`jest-expo`, in `src/**/__tests__/`. `npm test`, or `npm run test:watch`.
+
+Everything worth testing here is a pure function, and the suite covers the four
+places where being wrong is SILENT rather than loud:
+
+| Under test | What it costs to get wrong |
+| --- | --- |
+| `configStore` decoder | every app the user added, with no error |
+| `switchLanguageItems` | every phrase the user wrote, with no undo |
+| `parseTarget` | a widget tap opening nothing, or the wrong thing |
+| `parseQuoteCounts` | a settings screen crashing on a stale blob |
+
+Rules that keep it useful:
+
+- **Test the failure, not the happy path.** Almost every case in
+  `configStore.test.ts` is malformed input, because malformed input is what
+  actually reaches that code.
+- **Prove the test bites.** Before trusting one that guards data, run it against
+  the wrong implementation and watch it go red. `switchLanguageItems` has three
+  plausible wrong versions and all three fail the suite.
+- **No native calls.** `modules/launcher-native` and `expo-crypto` are mocked
+  once in `jest.setup.ts`. They are also the only places a test could depend on
+  the machine running it, since two of them read the host's locale and region.
+- **Fixtures go through a decode.** A quote loaded from disk is never the same
+  OBJECT as the bundled one it came from, so a fixture that reuses the bundled
+  references passes tests that a real device fails.
+
+`"types": ["jest", "node"]` in `tsconfig.json` is load-bearing: without it the
+test globals do not resolve and `npx tsc --noEmit` fails on every suite.
 
 Full Xcode.app is required. Command Line Tools alone cannot build an iOS app.
 

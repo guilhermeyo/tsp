@@ -49,7 +49,10 @@ export function parseQuoteCounts(raw: string): QuoteCounts {
   const table = (parsed as { counts?: unknown }).counts;
   if (typeof table !== 'object' || table === null || Array.isArray(table)) return {};
 
-  const counts: Record<string, number> = {};
+  // Prototype-less, because the keys are phrases the user typed. A line
+  // literally called 'toString' would otherwise read as already shown, since
+  // `counts['toString']` finds the inherited function instead of undefined.
+  const counts: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const [text, value] of Object.entries(table as Record<string, unknown>)) {
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
       counts[text] = Math.floor(value);

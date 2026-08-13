@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 
 import { consumeQuotesUpgrade, loadConfig, saveConfig } from './configStore';
 
-import { BUNDLED_QUOTES } from '@/domain/quotes';
+import { BUNDLED_QUOTES, switchLanguageItems } from '@/domain/quotes';
 import type { QuoteDuration } from '@/domain/quotes';
 import type {
   AppLanguage,
@@ -139,22 +139,12 @@ function reduce(state: LauncherConfig, action: Action): LauncherConfig {
     case 'setLanguage': {
       const { language } = action;
       if (state.language === language) return state;
-      // `state.language` is the OUTGOING language and is the only thing that
-      // may be diffed against. It is the one line in this file that can destroy
-      // the user's writing: diff against the incoming language instead and
-      // every phrase they typed disappears on the next switch, silently, with
-      // no undo; diff against nothing and the outgoing 101 pile up on top of
-      // the new ones. Anything not in the outgoing bundle is theirs, so it
-      // survives in its original order, which also makes a round trip
-      // (pt-BR to ja and back) return exactly the list they started with.
-      const previous = new Set(BUNDLED_QUOTES[state.language]);
-      const written = state.quotes.items.filter((item) => !previous.has(item));
       return {
         ...state,
         language,
         quotes: {
           ...state.quotes,
-          items: [...BUNDLED_QUOTES[language], ...written],
+          items: switchLanguageItems(state.language, language, state.quotes.items),
         },
       };
     }

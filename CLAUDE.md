@@ -31,7 +31,7 @@ All four are explained in `AGENTS.md`.
 
 ## Working here
 
-- `npx tsc --noEmit` must be clean before you claim anything is done.
+- `npx tsc --noEmit` and `npm test` must both be clean before you claim anything is done.
 - Comment the native side generously and the obvious TypeScript not at all. The point of this repo
   is learning the native half.
 - This is a child of the **lifestyle** meta-repo: default branch `master`, commits via

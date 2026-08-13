@@ -118,3 +118,32 @@ export const BUNDLED_QUOTES: Record<AppLanguage, readonly Quote[]> = {
   es: lift(CATALOG.es),
   ja: lift(CATALOG.ja),
 };
+
+/**
+ * The list to store when the language changes, and the one function in this app
+ * that rewrites something the user wrote with no undo.
+ *
+ * `from` is the OUTGOING language and is the only thing that may be diffed
+ * against. Diff against the incoming one and every phrase they typed disappears
+ * on the next switch; diff against nothing and the outgoing catalogue piles up
+ * on top of the new one. Anything not in the outgoing bundle is theirs, so it
+ * survives in its original order, which is also what makes a round trip return
+ * exactly the list they started with.
+ *
+ * Matched on TEXT, never on object identity. A quote used to be a string, and a
+ * Set of strings compares by value; adding an optional author made it an object,
+ * where a Set compares by reference and a decoded quote is never the same object
+ * as the bundled one it was loaded from. That version worked on the first run,
+ * when the two really were the same objects, and silently doubled the list on
+ * every launch after. Text is also the key the native counters use, so this
+ * agrees with them by construction.
+ */
+export function switchLanguageItems(
+  from: AppLanguage,
+  to: AppLanguage,
+  items: readonly Quote[]
+): Quote[] {
+  const bundled = new Set(BUNDLED_QUOTES[from].map((quote) => quote.text));
+  const written = items.filter((item) => !bundled.has(item.text));
+  return [...BUNDLED_QUOTES[to], ...written];
+}
