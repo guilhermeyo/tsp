@@ -3,8 +3,18 @@ import { useRouter, useTheme as useNavigationTheme } from 'expo-router';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { DisclosureRow, ROW_PADDING, SECTION_INSET } from '@/components/DisclosureRow';
-import { FONT_LABELS, LANGUAGE_LABELS, SIZE_LABELS } from '@/domain/types';
+import { LANGUAGE_LABELS } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore } from '@/store/LauncherStore';
+
+/**
+ * The three tokens no catalog may reach. They are passed into the footer
+ * patterns as parameters so a translator gets the connective and never the
+ * product name, the data source's domain, or the licence identifier.
+ */
+const APP_NAME = 'The Simple Phone';
+const WEATHER_PROVIDER = 'Open-Meteo.com';
+const WEATHER_LICENSE = 'CC BY 4.0';
 
 /**
  * THE HUB. Every section of the app is one tap from here.
@@ -37,19 +47,22 @@ export default function HubScreen() {
   const store = useLauncherStore();
   const router = useRouter();
   const { colors } = useNavigationTheme();
+  const s = useStrings();
 
   const { apps, theme, quotes, weather, language } = store.config;
 
   const secondaryLabel = theme.isDark ? 'rgba(235, 235, 245, 0.6)' : 'rgba(60, 60, 67, 0.6)';
 
   // Off is a real state for both of these and reads better than a zero: the
-  // user did not run out of phrases, they turned phrases off.
+  // user did not run out of phrases, they turned phrases off. The third rung is
+  // a place name the user chose, which is data and is never translated.
   const weatherValue = !weather.enabled
-    ? 'Off'
+    ? s.commonOff
     : weather.placeName === ''
-      ? 'No city'
+      ? s.hubNoCity
       : weather.placeName;
-  const phrasesValue = quotes.enabled ? `${quotes.items.length}` : 'Off';
+  // Bare numerals need no key: Latin digits are correct in all four locales.
+  const phrasesValue = quotes.enabled ? `${quotes.items.length}` : s.commonOff;
 
   const version = Constants.expoConfig?.version ?? '';
 
@@ -64,16 +77,20 @@ export default function HubScreen() {
     >
       {/* The features. Each one is something the widget or the relay renders. */}
       <View style={[styles.card, { backgroundColor: colors.card }]}>
-        <DisclosureRow label="Apps" value={`${apps.length}`} onPress={() => router.push('/apps')} />
+        <DisclosureRow
+          label={s.sectionApps}
+          value={`${apps.length}`}
+          onPress={() => router.push('/apps')}
+        />
         <View style={[styles.separator, { backgroundColor: colors.border }]} />
         <DisclosureRow
-          label="Weather"
+          label={s.sectionWeather}
           value={weatherValue}
           onPress={() => router.push('/weather')}
         />
         <View style={[styles.separator, { backgroundColor: colors.border }]} />
         <DisclosureRow
-          label="Phrases"
+          label={s.sectionPhrases}
           value={phrasesValue}
           onPress={() => router.push('/phrases')}
         />
@@ -81,20 +98,25 @@ export default function HubScreen() {
 
       {/*
         A second card, not three more rows in the first one. These two are not
-        features: they are settings that cut ACROSS every feature above. Font
-        and size drive the launcher rows and the preview; language drives both
-        the phrase catalog here and the weekday abbreviations the weather widget
-        renders in another process.
+        features: they are the settings that cut ACROSS everything above,
+        language included. Font and size drive the launcher rows and the
+        preview. Language governs the whole interface -- every label on every
+        screen, the bundled phrase catalog, and the weekday abbreviations the
+        weather widget renders in another process -- which is why this row is
+        the ONLY one in the app. Phrases and Weather used to carry a copy each,
+        back when language was a property of the phrase catalog.
       */}
       <View style={[styles.card, { backgroundColor: colors.card }]}>
         <DisclosureRow
-          label="Appearance"
-          value={`${FONT_LABELS[theme.font]}, ${SIZE_LABELS[theme.size]}`}
+          label={s.sectionAppearance}
+          value={s.hubAppearanceValue(s.fontLabels[theme.font], s.sizeLabels[theme.size])}
           onPress={() => router.push('/appearance')}
         />
         <View style={[styles.separator, { backgroundColor: colors.border }]} />
+        {/* The endonym, never translated: a user whose phone is in a language
+            this app does not support can still find their own here. */}
         <DisclosureRow
-          label="Language"
+          label={s.sectionLanguage}
           value={LANGUAGE_LABELS[language]}
           onPress={() => router.push('/language')}
         />
@@ -108,10 +130,10 @@ export default function HubScreen() {
       */}
       <View style={styles.footer}>
         <Text style={[styles.footerText, { color: secondaryLabel }]}>
-          {version === '' ? 'The Simple Phone' : `The Simple Phone ${version}`}
+          {version === '' ? APP_NAME : s.hubVersion(APP_NAME, version)}
         </Text>
         <Text style={[styles.footerText, { color: secondaryLabel }]}>
-          Weather data by Open-Meteo.com, CC BY 4.0
+          {s.hubAttribution(WEATHER_PROVIDER, WEATHER_LICENSE)}
         </Text>
       </View>
     </ScrollView>

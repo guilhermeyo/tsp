@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { AppLanguage, Theme, Weather } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { fontFamilyFor } from '@/theme/fonts';
 import { textColor } from '@/theme/tokens';
 import type { SymbolViewProps } from 'expo-symbols';
@@ -50,7 +51,15 @@ type State =
   | { status: 'ok'; days: Day[] }
   | { status: 'failed' };
 
-/** Local noon, so a timezone shift cannot roll the label onto the wrong day. */
+/**
+ * Local noon, so a timezone shift cannot roll the label onto the wrong day.
+ *
+ * `language` is the stored app tag, which now includes 'es' and 'ja'. Nothing
+ * here ships weekday data: Hermes delegates `Intl` to the platform ICU on iOS,
+ * so these abbreviations come from Foundation, the same source the widget's
+ * SwiftUI twin reads through `Locale(identifier:)`. That is also why this is the
+ * one line on this screen whose output cannot be verified by reading the code.
+ */
 function weekdayLabel(isoDate: string, language: AppLanguage): string {
   const date = new Date(`${isoDate}T12:00:00`);
   return new Intl.DateTimeFormat(language, { weekday: 'short' }).format(date);
@@ -66,6 +75,7 @@ export function WeatherPreviewCard({
   language: AppLanguage;
 }) {
   const [state, setState] = useState<State>({ status: 'idle' });
+  const s = useStrings();
   const { latitude, longitude, unit } = weather;
 
   useEffect(() => {
@@ -140,10 +150,10 @@ export function WeatherPreviewCard({
       ) : (
         <Text style={[styles.message, { color: dim, fontFamily: family }]}>
           {state.status === 'failed'
-            ? 'Could not load the forecast'
+            ? s.weatherPreviewFailed
             : state.status === 'loading'
-              ? 'Loading…'
-              : 'Choose a city to see the forecast'}
+              ? s.commonLoading
+              : s.weatherPreviewIdle}
         </Text>
       )}
     </View>

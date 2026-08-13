@@ -1,4 +1,4 @@
-import { Stack, useRouter, useTheme as useNavigationTheme } from 'expo-router';
+import { Stack, useTheme as useNavigationTheme } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import {
@@ -16,12 +16,8 @@ import {
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { WeatherPreviewCard } from '@/components/WeatherPreviewCard';
 import { guessPlaceFromNetwork, searchPlaces, type GeocodingPlace } from '@/domain/geocoding';
-import {
-  LANGUAGE_LABELS,
-  TEMPERATURE_UNITS,
-  TEMPERATURE_UNIT_LABELS,
-  type TemperatureUnit,
-} from '@/domain/types';
+import { TEMPERATURE_UNITS, type TemperatureUnit } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore } from '@/store/LauncherStore';
 
 const SECTION_INSET = 20;
@@ -56,8 +52,8 @@ type SearchState =
   | { status: 'failed' };
 
 /**
- * Where the weather widget gets its city, its unit, and (indirectly) its
- * weekday names.
+ * Where the weather widget gets its city and its unit. Its weekday names follow
+ * the language, which is set on the hub and no longer has a row here.
  *
  * Also the destination of the widget's own tap: `simplephonern://weather` is a
  * new HOST on the existing scheme, so `Relay.target(from:)` in AppDelegate
@@ -66,7 +62,7 @@ type SearchState =
 export default function WeatherScreen() {
   const store = useLauncherStore();
   const { theme, weather, language } = store.config;
-  const router = useRouter();
+  const s = useStrings();
   const { colors } = useNavigationTheme();
 
   const secondaryLabel = theme.isDark ? 'rgba(235, 235, 245, 0.6)' : 'rgba(60, 60, 67, 0.6)';
@@ -155,7 +151,7 @@ export default function WeatherScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Weather' }} />
+      <Stack.Screen options={{ title: s.sectionWeather }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: colors.background }}
@@ -174,7 +170,7 @@ export default function WeatherScreen() {
 
         <View style={[styles.card, { backgroundColor: colors.card }]}>
           <View style={styles.row}>
-            <Text style={[styles.rowLabel, { color: colors.text }]}>Show weather widget</Text>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>{s.weatherEnable}</Text>
             <Switch
               value={weather.enabled}
               onValueChange={(enabled) => store.setWeatherEnabled(enabled)}
@@ -182,11 +178,11 @@ export default function WeatherScreen() {
           </View>
         </View>
 
-        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>City</Text>
+        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>{s.weatherSectionCity}</Text>
 
         <View style={[styles.card, { backgroundColor: colors.card }]}>
           <View style={styles.row}>
-            <Text style={[styles.rowLabel, { color: colors.text }]}>Forecast for</Text>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>{s.weatherForecastFor}</Text>
             <Text
               style={[
                 styles.value,
@@ -194,19 +190,21 @@ export default function WeatherScreen() {
               ]}
               numberOfLines={1}
             >
-              {weather.placeName === '' ? 'No city yet' : weather.placeName}
+              {weather.placeName === '' ? s.weatherNoCityYet : weather.placeName}
             </Text>
           </View>
         </View>
 
-        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>Search</Text>
+        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>
+          {s.weatherSectionSearch}
+        </Text>
 
         <View style={[styles.card, { backgroundColor: colors.card }]}>
           <View style={styles.row}>
             <TextInput
               value={query}
               onChangeText={setQuery}
-              placeholder="City name"
+              placeholder={s.weatherSearchHint}
               placeholderTextColor={secondaryLabel}
               style={[styles.input, { color: colors.text }]}
               keyboardAppearance={theme.isDark ? 'dark' : 'light'}
@@ -254,7 +252,7 @@ export default function WeatherScreen() {
               <View style={[styles.separator, { backgroundColor: colors.border }]} />
               <View style={styles.row}>
                 <Text style={[styles.message, { color: secondaryLabel }]}>
-                  {`No city matched "${query.trim()}".`}
+                  {s.weatherSearchNoMatch(query.trim())}
                 </Text>
               </View>
             </>
@@ -265,19 +263,18 @@ export default function WeatherScreen() {
               <View style={[styles.separator, { backgroundColor: colors.border }]} />
               <View style={styles.row}>
                 <Text style={[styles.message, { color: colors.notification }]}>
-                  Could not reach the city search. Check the connection and type again.
+                  {s.weatherSearchFailed}
                 </Text>
               </View>
             </>
           )}
         </View>
 
-        <Text style={[styles.footer, { color: secondaryLabel }]}>
-          Only the city is stored, as a name and a rounded pair of coordinates. The app never asks
-          for your location.
-        </Text>
+        <Text style={[styles.footer, { color: secondaryLabel }]}>{s.weatherFooterPrivacy}</Text>
 
-        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>Units</Text>
+        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>
+          {s.weatherSectionUnits}
+        </Text>
 
         <View style={[styles.card, { backgroundColor: colors.card }]}>
           {/*
@@ -286,9 +283,9 @@ export default function WeatherScreen() {
           */}
           <View style={styles.segmentRow}>
             <SegmentedControl
-              accessibilityLabel="Temperature unit"
+              accessibilityLabel={s.a11yTemperatureUnit}
               options={TEMPERATURE_UNITS}
-              labels={TEMPERATURE_UNIT_LABELS}
+              labels={s.temperatureUnitLabels}
               value={weather.unit}
               onChange={selectUnit}
               isDark={theme.isDark}
@@ -296,37 +293,15 @@ export default function WeatherScreen() {
           </View>
         </View>
 
-        <Text style={[styles.footer, { color: secondaryLabel }]}>
-          Switching units redraws the widget from what it already fetched. It costs no network.
-        </Text>
-
-        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>Language</Text>
-
-        <View style={[styles.card, { backgroundColor: colors.card }]}>
-          <Pressable
-            accessibilityRole="button"
-            style={styles.row}
-            onPress={() => router.push('/language')}
-          >
-            <Text style={[styles.rowLabel, { color: colors.text }]}>Language</Text>
-            <View style={styles.disclosure}>
-              <Text style={[styles.value, { color: secondaryLabel }]}>
-                {LANGUAGE_LABELS[language]}
-              </Text>
-              <SymbolView
-                name="chevron.right"
-                size={14}
-                weight="semibold"
-                tintColor={tertiaryLabel}
-                style={styles.chevron}
-              />
-            </View>
-          </Pressable>
-        </View>
-
-        <Text style={[styles.footer, { color: secondaryLabel }]}>
-          The weekday names in the widget follow this setting, not the phone&apos;s language.
-        </Text>
+        {/*
+          This screen used to end with a Language section pointing at
+          /language, plus a footer promising the widget's weekday names follow
+          "this setting, not the phone's language". Both are gone: the setting
+          now drives the entire interface, so it lives once, on the hub, and the
+          footer's distinction stopped being interesting the moment the phone's
+          language became the first-run default.
+        */}
+        <Text style={[styles.footer, { color: secondaryLabel }]}>{s.weatherFooterUnits}</Text>
       </ScrollView>
     </>
   );
@@ -386,11 +361,6 @@ const styles = StyleSheet.create({
   message: {
     fontSize: 15,
     flexShrink: 1,
-  },
-  disclosure: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
   },
   value: {
     fontSize: 17,

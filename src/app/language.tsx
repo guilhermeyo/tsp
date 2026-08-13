@@ -4,31 +4,33 @@ import { Fragment } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { APP_LANGUAGES, LANGUAGE_LABELS } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore } from '@/store/LauncherStore';
 
 const SECTION_INSET = 20;
 const ROW_PADDING = 16;
 
 /**
- * The app's one language setting, reachable from the hub, from Phrases and from
- * Weather, all pushing this same route.
+ * The app's one language setting, reached from the hub and from nowhere else.
  *
- * It used to live inside Phrases, where it only chose a catalog of lines. It
- * moved out when the weather widget started rendering weekday names with it, in
- * another process, in Swift: a user who only wants the widget should not have
- * to open a phrases screen to change how their forecast reads.
+ * It used to live inside Phrases, where it only chose a catalog of lines, and
+ * grew a second entry point on Weather once the widget started rendering
+ * weekday names with it, in another process, in Swift. Now that the value picks
+ * the entire interface it is self-evidently global, so the two pointer rows are
+ * gone and the hub row is the only way in.
  */
 export default function LanguageScreen() {
   const store = useLauncherStore();
   const { theme, language } = store.config;
   const router = useRouter();
   const { colors } = useNavigationTheme();
+  const s = useStrings();
 
   const secondaryLabel = theme.isDark ? 'rgba(235, 235, 245, 0.6)' : 'rgba(60, 60, 67, 0.6)';
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Language' }} />
+      <Stack.Screen options={{ title: s.sectionLanguage }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: colors.background }}
@@ -47,7 +49,13 @@ export default function LanguageScreen() {
                   router.back();
                 }}
               >
-                {/* Each option is named in its own language, never translated. */}
+                {/*
+                 * Each option is named in its own language and is never
+                 * translated. It is what lets someone whose phone is in a
+                 * language this app does not have, and who therefore landed on
+                 * the English interface, find their own row without reading any
+                 * English.
+                 */}
                 <Text style={[styles.rowLabel, { color: colors.text }]}>
                   {LANGUAGE_LABELS[choice]}
                 </Text>
@@ -65,11 +73,13 @@ export default function LanguageScreen() {
           ))}
         </View>
 
-        <Text style={[styles.footer, { color: secondaryLabel }]}>
-          Sets the bundled phrases and the weekday names in the weather widget. Switching replaces
-          the bundled phrases with the other language&apos;s and keeps every line you wrote
-          yourself.
-        </Text>
+        {/*
+         * The second sentence is the reason this footer exists. Picking a row
+         * rewrites `quotes.items`, which is the only thing in this app that
+         * touches text the user wrote, so the warning has to sit next to the
+         * rows that do it rather than on the Phrases screen it affects.
+         */}
+        <Text style={[styles.footer, { color: secondaryLabel }]}>{s.languageFooter}</Text>
       </ScrollView>
     </>
   );

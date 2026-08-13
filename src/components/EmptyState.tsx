@@ -1,6 +1,7 @@
 import { SymbolView } from 'expo-symbols';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { useStrings } from '@/i18n/useStrings';
 import { useTheme } from '@/store/LauncherStore';
 import { fontFamilyFor } from '@/theme/fonts';
 import { textColor } from '@/theme/tokens';
@@ -21,6 +22,7 @@ function secondaryColor(isDark: boolean): string {
  */
 export function EmptyState() {
   const theme = useTheme();
+  const s = useStrings();
   const fontFamily = fontFamilyFor(theme.font);
   const secondary = secondaryColor(theme.isDark);
 
@@ -33,10 +35,13 @@ export function EmptyState() {
         style={styles.icon}
         accessibilityElementsHidden
       />
-      <Text style={[styles.headline, { fontFamily, color: textColor(theme) }]}>No apps yet</Text>
-      <Text style={[styles.subheadline, { fontFamily, color: secondary }]}>
-        Tap + to add the ones you actually use.
+      <Text style={[styles.headline, { fontFamily, color: textColor(theme) }]}>
+        {s.emptyAppsTitle}
       </Text>
+      {/* The '+' naming the toolbar button lives INSIDE the translated sentence
+          rather than being spliced around it, so each language can place the
+          glyph where its own grammar wants it. */}
+      <Text style={[styles.subheadline, { fontFamily, color: secondary }]}>{s.emptyAppsBody}</Text>
     </View>
   );
 }

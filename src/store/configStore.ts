@@ -13,6 +13,7 @@ import {
   isRowAlignment,
   isTemperatureUnit,
   isTextSize,
+  matchLanguage,
   type AppLanguage,
   type LauncherApp,
   type LauncherConfig,
@@ -37,23 +38,24 @@ import {
  */
 
 /**
- * The system language, collapsed onto the two catalogs this app actually has.
+ * The system language, collapsed onto the four catalogs this app actually has.
  *
  * Read from the phone ONCE and stored as a concrete tag, which is the whole
  * design of `config.language`: a stored 'system' would have to be resolved
  * independently here and in Swift, and the two resolvers would disagree the
- * moment the phone's language changed.
+ * moment the phone's language changed. It would also mean a phone-language
+ * change silently rewrote the phrase catalog the user is looking at, since
+ * that is what `setLanguage` does.
  *
- * Anything that is not Portuguese lands on English rather than on the app's
- * historical 'pt-BR' default, because an English catalog is at least readable
- * to a Spanish or German speaker.
+ * `matchLanguage` owns the collapsing rule, so this side and anything else that
+ * has to turn a tag into a setting agree by construction.
  *
  * Native call, so it is wrapped: `LauncherNative` is a JSI function and a
  * throw here would take the whole first render with it.
  */
 export function resolveInitialLanguage(): AppLanguage {
   try {
-    return LauncherNative.preferredLanguage().toLowerCase().startsWith('pt') ? 'pt-BR' : 'en';
+    return matchLanguage(LauncherNative.preferredLanguage());
   } catch {
     return 'en';
   }
@@ -69,14 +71,13 @@ export function resolveInitialUnit(): TemperatureUnit {
 }
 
 function defaultConfig(): LauncherConfig {
-  // One resolution feeding both the top-level value and its mirror inside
-  // quotes. Calling the resolver twice would be harmless today and a bug the
-  // day it stops being deterministic.
+  // One native read feeding the one field. Calling the resolver twice would be
+  // harmless today and a bug the day it stops being deterministic.
   const language = resolveInitialLanguage();
   return {
     apps: BUNDLED_DEFAULTS.slice(),
     theme: { ...DEFAULT_THEME },
-    quotes: { ...DEFAULT_QUOTES, language, items: BUNDLED_QUOTES[language].slice() },
+    quotes: { ...DEFAULT_QUOTES, items: BUNDLED_QUOTES[language].slice() },
     weather: { ...DEFAULT_WEATHER, unit: resolveInitialUnit() },
     language,
   };
@@ -131,23 +132,22 @@ export function consumeQuotesUpgrade(): boolean {
  * not as "the user deleted every line". Deleting the last phrase is what the
  * `enabled` switch is for, and silently showing nothing would look like a bug.
  *
- * `language` is passed IN rather than read from `value`, because the top-level
- * `config.language` now owns it and this field is only a mirror. Decoding the
- * mirror independently would let the two disagree, and the disagreement would
- * be invisible: the phrase screen would read one value and the weather widget
- * the other.
+ * `language` is a PARAMETER and is never written into the result. `quotes` no
+ * longer carries a language at all: `config.language` is the only copy in
+ * memory. It still has to be passed in, because it is what selects the bundle
+ * an empty `items` is refilled from, and reading it out of `value` here would
+ * reintroduce exactly the second source of truth this removed.
  */
 function decodeQuotes(value: unknown, language: AppLanguage): Quotes {
   if (!isRecord(value)) {
     didSynthesizeQuotes = true;
-    return { ...DEFAULT_QUOTES, language, items: BUNDLED_QUOTES[language].slice() };
+    return { ...DEFAULT_QUOTES, items: BUNDLED_QUOTES[language].slice() };
   }
   const items = Array.isArray(value.items)
     ? value.items.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
     : [];
   return {
     enabled: typeof value.enabled === 'boolean' ? value.enabled : DEFAULT_QUOTES.enabled,
-    language,
     duration: isQuoteDuration(value.duration) ? value.duration : DEFAULT_QUOTES.duration,
     items: items.length > 0 ? items : ((didSynthesizeQuotes = true), BUNDLED_QUOTES[language].slice()),
   };
@@ -195,6 +195,10 @@ function decodeLanguage(parsed: Record<string, unknown>): AppLanguage {
 
   didSynthesizeQuotes = true;
 
+  // Purely a READ path now. Nothing in this app has held a `quotes.language` in
+  // memory since the mirror was deleted; this branch exists only for configs
+  // already sitting on a device, and the write below re-lands the value at the
+  // top level, after which it is never reached again for that install.
   const quotes = parsed.quotes;
   if (isRecord(quotes) && isAppLanguage(quotes.language)) return quotes.language;
 
@@ -313,11 +317,18 @@ function serialize(config: LauncherConfig): string {
       urlString: app.urlString,
     })),
     // Top-level and authoritative. The widget reads THIS one to pick weekday
-    // names; the copy inside `quotes` below exists only so the native relay,
-    // which already reads that object, keeps working unchanged.
+    // names.
     language: config.language,
     quotes: {
       enabled: config.quotes.enabled,
+      // A WIRE ECHO, not a stored mirror: there is no `quotes.language` in
+      // memory any more, so this is projected from the single source at write
+      // time and cannot disagree with it. It is here because a reader that
+      // still expects it can outlive this build — most concretely an older
+      // binary side-loaded from Xcode onto the same device after testing this
+      // one, which would otherwise find no language and fall back. Costs one
+      // line and is the only part of killing the mirror that could lose data.
+      // DELETE in a later release, once no such binary is in circulation.
       language: config.language,
       duration: config.quotes.duration,
       // Resolved here so the native side never needs the label table. It reads

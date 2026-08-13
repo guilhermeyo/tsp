@@ -3,7 +3,8 @@ import { SymbolView } from 'expo-symbols';
 import { Fragment } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { FONT_CHOICES, FONT_LABELS } from '@/domain/types';
+import { FONT_CHOICES } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore } from '@/store/LauncherStore';
 import { fontFamilyFor } from '@/theme/fonts';
 
@@ -16,10 +17,11 @@ export default function FontScreen() {
   const theme = store.config.theme;
   const router = useRouter();
   const { colors } = useNavigationTheme();
+  const s = useStrings();
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Font' }} />
+      <Stack.Screen options={{ title: s.sectionFont }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: colors.background }}
@@ -46,11 +48,17 @@ export default function FontScreen() {
                 {/*
                   Each option is drawn in the face it selects, so the choice is
                   legible before it is made.
+
+                  That preview is weaker in Japanese and it is not a bug: none of
+                  the four faces ships CJK glyphs, so iOS substitutes the system
+                  font per character and the four labels look alike. The widget
+                  preview one screen back renders the user's own app names, which
+                  is where the difference is actually visible.
                 */}
                 <Text
                   style={[styles.rowLabel, { color: colors.text, fontFamily: fontFamilyFor(choice) }]}
                 >
-                  {FONT_LABELS[choice]}
+                  {s.fontLabels[choice]}
                 </Text>
                 {choice === theme.font && (
                   <SymbolView

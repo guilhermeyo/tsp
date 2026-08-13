@@ -4,13 +4,8 @@ import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { DisclosureRow, ROW_PADDING, SECTION_INSET } from '@/components/DisclosureRow';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { WidgetPreviewCard } from '@/components/WidgetPreviewCard';
-import {
-  ALIGNMENT_LABELS,
-  FONT_LABELS,
-  ROW_ALIGNMENTS,
-  SIZE_LABELS,
-  type RowAlignment,
-} from '@/domain/types';
+import { ROW_ALIGNMENTS, type RowAlignment } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore } from '@/store/LauncherStore';
 
 /** See DisclosureRow for what SECTION_INSET and ROW_PADDING are measured from. */
@@ -36,6 +31,7 @@ export default function AppearanceScreen() {
   const theme = store.config.theme;
   const router = useRouter();
   const { colors } = useNavigationTheme();
+  const s = useStrings();
 
   const secondaryLabel = theme.isDark ? 'rgba(235, 235, 245, 0.6)' : 'rgba(60, 60, 67, 0.6)';
 
@@ -45,7 +41,7 @@ export default function AppearanceScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Appearance', headerLargeTitleEnabled: true }} />
+      <Stack.Screen options={{ title: s.sectionAppearance, headerLargeTitleEnabled: true }} />
       <ScrollView
         // Required for the large title to collapse into the bar on scroll —
         // the native header measures the scroll view's adjusted inset.
@@ -53,7 +49,9 @@ export default function AppearanceScreen() {
         style={{ backgroundColor: colors.background }}
         contentContainerStyle={styles.content}
       >
-        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>Widget preview</Text>
+        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>
+          {s.appearanceSectionPreview}
+        </Text>
         {/*
           No card behind it: the Swift row used a clear `listRowBackground` so
           the preview floats directly on the form. Every control below rewrites
@@ -66,7 +64,7 @@ export default function AppearanceScreen() {
         {/* The second section is unlabelled, and the order of these four is fixed. */}
         <View style={[styles.card, { backgroundColor: colors.card }]}>
           <View style={styles.row}>
-            <Text style={[styles.rowLabel, { color: colors.text }]}>Dark</Text>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>{s.appearanceDark}</Text>
             <Switch
               value={theme.isDark}
               onValueChange={(isDark) => store.updateTheme({ isDark })}
@@ -76,8 +74,8 @@ export default function AppearanceScreen() {
           <View style={[styles.separator, { backgroundColor: colors.border }]} />
 
           <DisclosureRow
-            label="Font"
-            value={FONT_LABELS[theme.font]}
+            label={s.sectionFont}
+            value={s.fontLabels[theme.font]}
             onPress={() => router.push('/appearance/font')}
           />
 
@@ -91,9 +89,9 @@ export default function AppearanceScreen() {
           */}
           <View style={styles.segmentRow}>
             <SegmentedControl
-              accessibilityLabel="Alignment"
+              accessibilityLabel={s.a11yAlignment}
               options={ROW_ALIGNMENTS}
-              labels={ALIGNMENT_LABELS}
+              labels={s.alignmentLabels}
               value={theme.alignment}
               onChange={selectAlignment}
               isDark={theme.isDark}
@@ -103,8 +101,8 @@ export default function AppearanceScreen() {
           <View style={[styles.separator, { backgroundColor: colors.border }]} />
 
           <DisclosureRow
-            label="Size"
-            value={SIZE_LABELS[theme.size]}
+            label={s.sectionSize}
+            value={s.sizeLabels[theme.size]}
             onPress={() => router.push('/appearance/size')}
           />
         </View>
@@ -146,6 +144,11 @@ const styles = StyleSheet.create({
   },
   rowLabel: {
     fontSize: 17,
+    // The Switch beside it has a fixed intrinsic width and will not give way, so
+    // the label has to. Nothing today is long enough to need it -- Dark is one
+    // word in all four languages -- but this is the only row on the screen where
+    // an overlong label would push a control off the edge instead of truncating.
+    flexShrink: 1,
   },
   // A column, so the control stretches across the row instead of being packed
   // against one edge the way a labelled row's accessory is.

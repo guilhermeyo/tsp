@@ -10,7 +10,16 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { catalogSelection } from './catalog';
 
 import { FormField } from '@/components/FormField';
+import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore, useTheme } from '@/store/LauncherStore';
+
+/**
+ * The two sample URLs in the URL field's placeholder. A scheme is a wire
+ * format, so it is injected rather than written into the translated pattern --
+ * no catalog can reach it and turn `https` into something a user would type and
+ * wonder why it fails.
+ */
+const URL_EXAMPLE = 'spotify:// or https://…';
 
 /**
  * SCREEN 2 -- the unified add/edit form. ONE view, two modes, exactly as
@@ -21,6 +30,7 @@ export default function AppFormScreen() {
   const router = useRouter();
   const store = useLauncherStore();
   const theme = useTheme();
+  const s = useStrings();
   const colors = palette(theme.isDark);
 
   // The declared return type is `Record<string, string | string[]>`, which lies:
@@ -88,12 +98,12 @@ export default function AppFormScreen() {
     <>
       <Stack.Screen
         options={{
-          title: isEditing ? 'Edit App' : 'Add App',
+          title: isEditing ? s.formTitleEdit : s.formTitleAdd,
           headerLeft: () => (
             // Discards every local edit with no unsaved-changes prompt. Swipe-down
             // does the same, which is why interactive dismissal is left enabled.
             <Pressable onPress={dismiss} hitSlop={8}>
-              <Text style={[styles.headerButton, { color: colors.tint }]}>Cancel</Text>
+              <Text style={[styles.headerButton, { color: colors.tint }]}>{s.commonCancel}</Text>
             </Pressable>
           ),
           headerRight: () => (
@@ -105,7 +115,7 @@ export default function AppFormScreen() {
                   { color: canSave ? colors.tint : colors.disabled },
                 ]}
               >
-                {isEditing ? 'Save' : 'Add'}
+                {isEditing ? s.commonSave : s.commonAdd}
               </Text>
             </Pressable>
           ),
@@ -124,7 +134,7 @@ export default function AppFormScreen() {
           <FormField
             value={name}
             onChangeText={setName}
-            placeholder="Name"
+            placeholder={s.formHintName}
             autoCapitalize="sentences"
             autoCorrect
             color={colors.label}
@@ -138,9 +148,10 @@ export default function AppFormScreen() {
           <FormField
             value={urlString}
             onChangeText={setUrlString}
-            // Unicode ellipsis, not three periods. This string is user-visible
-            // and was copied verbatim from the original.
-            placeholder="URL (spotify:// or https://…)"
+            // Unicode ellipsis, not three periods. That detail lives in
+            // URL_EXAMPLE now, because it is part of the sample and not part of
+            // the sentence around it.
+            placeholder={s.formHintUrl(URL_EXAMPLE)}
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
@@ -155,7 +166,7 @@ export default function AppFormScreen() {
             style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.pressed }]}
             onPress={() => router.push('/(modals)/catalog')}
           >
-            <Text style={[styles.rowLabel, { color: colors.tint }]}>Choose from catalog</Text>
+            <Text style={[styles.rowLabel, { color: colors.tint }]}>{s.formChooseFromCatalog}</Text>
           </Pressable>
           <View style={[styles.separator, { backgroundColor: colors.separator }]} />
           {/*
@@ -172,12 +183,15 @@ export default function AppFormScreen() {
             onPress={() => {
               const target = urlString.trim();
               Linking.openURL(target).catch(() => {
-                Alert.alert(
-                  'Could not open this',
-                  `iOS refused to open:\n\n${target}\n\n` +
-                    'No installed app handles it. If the app IS installed, its scheme ' +
-                    'changed, or another app claimed the same one.'
-                );
+                // ONE pattern with the URL inside it, not two sentences glued
+                // around an interpolation: Japanese states the explanation
+                // before the address, which concatenation made impossible.
+                // The relay's alert in `ios/SimplePhone/AppDelegate.swift` is a
+                // near-twin -- a different sentence, deliberately, because that
+                // one fires from a widget tap and cannot offer to edit the URL.
+                // They are not kept byte-identical, but they must keep saying
+                // the same thing in every language.
+                Alert.alert(s.formOpenFailedTitle, s.formOpenFailedBody(target));
               });
             }}
           >
@@ -187,7 +201,7 @@ export default function AppFormScreen() {
                 { color: urlString.trim().length === 0 ? colors.disabled : colors.tint },
               ]}
             >
-              Test this URL
+              {s.formTestUrl}
             </Text>
           </Pressable>
         </View>
@@ -203,7 +217,7 @@ export default function AppFormScreen() {
                 dismiss();
               }}
             >
-              <Text style={[styles.rowLabel, { color: colors.destructive }]}>Delete</Text>
+              <Text style={[styles.rowLabel, { color: colors.destructive }]}>{s.commonDelete}</Text>
             </Pressable>
           </View>
         )}

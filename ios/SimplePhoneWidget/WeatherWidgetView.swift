@@ -151,11 +151,29 @@ struct WeatherWidgetView: View {
         return "\(Int(value.rounded()))°"
     }
 
-    /// Two strings, chosen by prefix rather than by exact tag, so "pt-BR",
-    /// "pt-PT" and a bare "pt" all read Portuguese. Everything else, including
-    /// a tag this build has never seen, reads English.
+    /// Chosen by PRIMARY SUBTAG rather than by exact tag, so "pt-BR", "pt-PT"
+    /// and a bare "pt" all read Portuguese, and "es-419" and "es-ES" both read
+    /// Spanish. Everything else, including a tag this build has never seen,
+    /// reads English.
+    ///
+    /// `prefix(2)` and not `hasPrefix` because the stored tag can arrive
+    /// underscored: Swift spells regions with one in `Locale.identifier`
+    /// ("pt_BR"), which is exactly what `LauncherConfig.default` seeds
+    /// `language` from. Taking the first two characters is blind to the
+    /// separator, so both spellings land on the same case.
+    ///
+    /// These four strings are hardcoded Swift while every other string in the
+    /// product moved to a shared catalog, and that is not an oversight: a
+    /// widget extension's `Bundle.main` is the .appex, so this process cannot
+    /// see the app bundle's quotes.json and has nothing to share. "TSP" is the
+    /// brand and is the same in all four.
     private static func emptyMessage(language: String) -> String {
-        language.lowercased().hasPrefix("pt") ? "defina sua cidade no TSP" : "set your city in TSP"
+        switch language.lowercased().prefix(2) {
+        case "pt": return "defina sua cidade no TSP"
+        case "es": return "define tu ciudad en TSP"
+        case "ja": return "TSPで都市を設定"
+        default: return "set your city in TSP"
+        }
     }
 }
 

@@ -24,9 +24,9 @@
  * no duplicated strings.
  */
 
-import CATALOG from './quotes.json';
+import type { AppLanguage } from './types';
 
-export type QuoteLanguage = 'pt-BR' | 'en';
+import CATALOG from './quotes.json';
 
 /**
  * How long the phrase is held before the target app is asked to open.
@@ -69,13 +69,8 @@ export const QUOTE_DURATION_MS: Record<QuoteDuration, number> = {
   long: 4000,
 };
 
-export const QUOTE_DURATION_LABEL: Record<QuoteDuration, string> = {
-  instant: 'Instant',
-  quick: 'Quick',
-  short: 'Short',
-  medium: 'Medium',
-  long: 'Long',
-};
+// The duration labels live in src/i18n/ now. Swift never reads them: it reads
+// `durationMs`, resolved from the table above at serialize time.
 
 export function isQuoteDuration(value: unknown): value is QuoteDuration {
   return (
@@ -87,19 +82,23 @@ export function isQuoteDuration(value: unknown): value is QuoteDuration {
   );
 }
 
-export const QUOTE_LANGUAGES: readonly QuoteLanguage[] = ['pt-BR', 'en'];
-
-export function isQuoteLanguage(value: unknown): value is QuoteLanguage {
-  return value === 'pt-BR' || value === 'en';
-}
-
-/** Label for the language picker. Shown in the user's own language, not translated. */
-export const QUOTE_LANGUAGE_LABEL: Record<QuoteLanguage, string> = {
-  'pt-BR': 'Português',
-  en: 'English',
-};
-
-export const BUNDLED_QUOTES: Record<QuoteLanguage, readonly string[]> = {
+/**
+ * The phrase catalogs, keyed by the app's one language.
+ *
+ * Written out key by key rather than handed `CATALOG` wholesale so the
+ * annotation does the checking: a language added to `AppLanguage` with no array
+ * here is a compile error ON THIS LINE, and a typo'd key is one too. No codegen,
+ * no runtime assertion, no way for the four catalogs to fall out of step with
+ * the four languages.
+ *
+ * `relay` and `defaultLanguage` are SIBLING keys in the same file, read only by
+ * Swift. They are deliberately not mentioned here: Swift's `bundledItems` looks
+ * up `bundledCatalog[language]` at the top level, so the phrase arrays have to
+ * stay top-level too.
+ */
+export const BUNDLED_QUOTES: Record<AppLanguage, readonly string[]> = {
   'pt-BR': CATALOG['pt-BR'],
   en: CATALOG.en,
+  es: CATALOG.es,
+  ja: CATALOG.ja,
 };

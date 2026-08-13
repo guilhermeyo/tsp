@@ -3,7 +3,8 @@ import { SymbolView } from 'expo-symbols';
 import { Fragment } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { SIZE_LABELS, TEXT_SIZES } from '@/domain/types';
+import { TEXT_SIZES } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore } from '@/store/LauncherStore';
 
 const SECTION_INSET = 20;
@@ -15,10 +16,11 @@ export default function SizeScreen() {
   const theme = store.config.theme;
   const router = useRouter();
   const { colors } = useNavigationTheme();
+  const s = useStrings();
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Size' }} />
+      <Stack.Screen options={{ title: s.sectionSize }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: colors.background }}
@@ -45,7 +47,7 @@ export default function SizeScreen() {
                   form. The preview card on the previous screen is where size is
                   meant to be judged.
                 */}
-                <Text style={[styles.rowLabel, { color: colors.text }]}>{SIZE_LABELS[size]}</Text>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>{s.sizeLabels[size]}</Text>
                 {size === theme.size && (
                   <SymbolView
                     name="checkmark"

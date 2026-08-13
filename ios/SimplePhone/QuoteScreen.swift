@@ -525,13 +525,16 @@ enum QuoteScreen {
   private static func saveStats(_ stats: Stats, items: [String]) {
     var counts = stats.counts
     // Keys for lines no longer in rotation are KEPT on purpose. It is what
-    // makes a language round trip non-destructive (the two catalogs are
-    // disjoint, so pruning would zero the other one permanently), and a count
-    // is only ever looked up for an item that is in the list right now, so a
-    // stale key cannot reach the draw. The bound exists only so that pasting in
-    // a very large list cannot grow a blob that is rewritten on every
-    // backgrounding.
-    if counts.count > 500 {
+    // makes a language round trip non-destructive (the four catalogs are
+    // disjoint, so pruning would zero the others permanently), and a count is
+    // only ever looked up for an item that is in the list right now, so a stale
+    // key cannot reach the draw. The bound exists only so that pasting in a very
+    // large list cannot grow a blob that is rewritten on every backgrounding.
+    //
+    // It has to clear the sum of every bundled catalog for the guarantee above
+    // to hold: four languages at 101 lines each is 404 keys that all have to fit
+    // alongside whatever the user wrote themselves.
+    if counts.count > 1200 {
       let live = Set(items)
       counts = counts.filter { live.contains($0.key) }
     }
@@ -572,10 +575,22 @@ enum QuoteScreen {
     let items: [String]
     let isDark: Bool
     let font: String
+    /// The interface language the user settled on, as a stored BCP-47 tag, or
+    /// nil when nothing has ever been written. Carried here so the relay's
+    /// failure alert can be worded in it -- it is the only string this process
+    /// writes that the user reads.
+    let language: String?
     /// Resolved by the app from its named durations, so this side never carries
     /// the label table. Clamped on read: a corrupt payload must not be able to
     /// freeze the launcher on a phrase.
     let holdSeconds: TimeInterval
+  }
+
+  /// The stored language, for the one caller outside this file: AppDelegate's
+  /// failure alert. Re-reads the config rather than caching it, which is free on
+  /// a path that has already given up on opening anything.
+  static func configuredLanguage() -> String? {
+    loadConfig().language
   }
 
   /// Hand-rolled rather than Codable structs: this needs five fields out of a
@@ -598,7 +613,9 @@ enum QuoteScreen {
     let quotes = root?["quotes"] as? [String: Any]
     let theme = root?["theme"] as? [String: Any]
 
-    let language = quotes?["language"] as? String
+    // Top-level `language` is authoritative. `quotes.language` is read only as
+    // a fallback, for a config written by a build that still mirrored it there.
+    let language = (root?["language"] as? String) ?? (quotes?["language"] as? String)
     let stored = (quotes?["items"] as? [String])?
       .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? []
 
@@ -609,6 +626,7 @@ enum QuoteScreen {
       items: stored.isEmpty ? bundledItems(language: language) : stored,
       isDark: theme?["isDark"] as? Bool ?? true,
       font: theme?["font"] as? String ?? "monospaced",
+      language: language,
       // Absent means 0, not some invented default: `instant` is the app's own
       // first-run duration, and inventing a wait here would be exactly the
       // artificial delay this feature is not allowed to add.
@@ -628,12 +646,71 @@ enum QuoteScreen {
   }()
 
   private static func bundledItems(language: String?) -> [String] {
-    // The default language lives in the catalog rather than being re-decided
-    // here, so Swift cannot drift from `DEFAULT_QUOTES.language`.
-    let fallback = bundledCatalog["defaultLanguage"] as? String ?? "pt-BR"
-    if let language, let items = bundledCatalog[language] as? [String], !items.isEmpty {
+    if let language, let items = catalogPhrases(matching: language) {
       return items
     }
+
+    // THE SYSTEM STEP, and it is not a second resolver competing with the app's.
+    // It is reachable ONLY while the shared container holds no phrase list at
+    // all -- a fresh install whose first ever action was a widget tap, before
+    // JavaScript has run once. The moment the app writes a config, the stored
+    // `language` above wins unconditionally and this line is dead. Without it a
+    // brand-new install would show its very first cover in whatever
+    // `defaultLanguage` happens to say, regardless of the phone.
+    if let system = Locale.preferredLanguages.first, let items = catalogPhrases(matching: system) {
+      return items
+    }
+
+    // The default language lives in the catalog rather than being re-decided
+    // here, so Swift cannot drift from the TypeScript side.
+    let fallback = bundledCatalog["defaultLanguage"] as? String ?? "en"
     return bundledCatalog[fallback] as? [String] ?? []
+  }
+
+  /// A BCP-47 tag to one of the catalog's phrase arrays: exact key first, then
+  /// the two-letter primary subtag, mirroring `matchLanguage` on the TypeScript
+  /// side. Underscores are normalised because `Locale` spells regions with one
+  /// ("pt_BR") while the catalog keys use hyphens.
+  ///
+  /// The `as? [String]` cast is also the guard against the catalog's non-phrase
+  /// keys: `relay` is a dictionary and `defaultLanguage` is a string, so neither
+  /// can ever be returned as a phrase list even when a tag prefix-matches their
+  /// name. Keys are sorted so a tie between two candidates is at least stable.
+  private static func catalogPhrases(matching tag: String) -> [String]? {
+    let normalized = tag.replacingOccurrences(of: "_", with: "-").lowercased()
+    guard !normalized.isEmpty else { return nil }
+    let prefix = String(normalized.prefix(2))
+    let keys = bundledCatalog.keys.sorted()
+    let key = keys.first { $0.lowercased() == normalized }
+      ?? keys.first { $0.lowercased().hasPrefix(prefix) }
+    guard let key, let items = bundledCatalog[key] as? [String], !items.isEmpty else { return nil }
+    return items
+  }
+
+  /// The relay's failure alert, in the user's language, from the same
+  /// `quotes.json` the app imports. `AppDelegate` is the only caller.
+  ///
+  /// This is technically a SECOND matcher, and it is safe only because it
+  /// matches the STORED tag and never the system locale: `config.language` is
+  /// always one of the four exact keys in the relay table, so it cannot disagree
+  /// with the JavaScript resolver about which language the user is in. If a
+  /// future build ever stores a tag the table lacks, the worst case is English.
+  ///
+  /// The English table is the base and the matched one is merged over it, so a
+  /// half-finished translation renders its finished keys and English for the
+  /// rest rather than nothing at all.
+  static func relayStrings(language: String?) -> [String: String] {
+    let table = bundledCatalog["relay"] as? [String: Any] ?? [:]
+    let english = table["en"] as? [String: String] ?? [:]
+    guard let language else { return english }
+
+    let normalized = language.replacingOccurrences(of: "_", with: "-").lowercased()
+    guard !normalized.isEmpty else { return english }
+    let prefix = String(normalized.prefix(2))
+    let keys = table.keys.sorted()
+    let key = keys.first { $0.lowercased() == normalized }
+      ?? keys.first { $0.lowercased().hasPrefix(prefix) }
+    guard let key, let localized = table[key] as? [String: String] else { return english }
+    return english.merging(localized) { _, new in new }
   }
 }

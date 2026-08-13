@@ -9,6 +9,7 @@ import { useAnimatedReaction, useSharedValue } from 'react-native-reanimated';
 import { useReorderableDrag } from 'react-native-reorderable-list';
 
 import type { LauncherApp } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { useTheme } from '@/store/LauncherStore';
 import { fontFamilyFor } from '@/theme/fonts';
 import {
@@ -56,6 +57,7 @@ interface AppRowProps {
  */
 export function AppRow({ app, editing, onPress, onDelete }: AppRowProps) {
   const theme = useTheme();
+  const s = useStrings();
   const { colors } = useNavigationTheme();
 
   // Only valid inside a ReorderableList cell -- the hook reads the cell's
@@ -119,7 +121,10 @@ export function AppRow({ app, editing, onPress, onDelete }: AppRowProps) {
         style={[styles.row, { backgroundColor: colors.card }]}
       >
         {editing ? (
-          <Pressable onPress={onDelete} hitSlop={8} accessibilityLabel={`Delete ${app.name}`}>
+          // A pattern rather than a label plus the name: Japanese is verb-final,
+          // so "Delete {name}" cannot be assembled by concatenation. The name
+          // itself is the user's own text and is never translated.
+          <Pressable onPress={onDelete} hitSlop={8} accessibilityLabel={s.a11yDeleteApp(app.name)}>
             <SymbolView
               name="minus.circle.fill"
               size={22}
@@ -165,7 +170,7 @@ export function AppRow({ app, editing, onPress, onDelete }: AppRowProps) {
           // `onPressIn`, not `onPress`: the grabber must take over the moment
           // the finger lands, or the drag would only begin after the finger
           // lifted. `drag()` is a no-op unless the list has `dragEnabled`.
-          <Pressable onPressIn={drag} hitSlop={8} accessibilityLabel={`Reorder ${app.name}`}>
+          <Pressable onPressIn={drag} hitSlop={8} accessibilityLabel={s.a11yReorderApp(app.name)}>
             <SymbolView
               name="line.3.horizontal"
               size={22}
@@ -196,6 +201,11 @@ interface DeleteActionProps {
  * a full swipe from a partial one.
  */
 function DeleteAction({ translation, peak, color, onPress }: DeleteActionProps) {
+  // Read here rather than passed down from `AppRow`: this is a real component
+  // element inside the swipeable's render prop, so it re-renders with the store
+  // on its own and the label needs no plumbing through `renderRightActions`.
+  const s = useStrings();
+
   useAnimatedReaction(
     () => translation.value,
     (current) => {
@@ -214,7 +224,7 @@ function DeleteAction({ translation, peak, color, onPress }: DeleteActionProps) 
 
   return (
     <Pressable onPress={onPress} style={[styles.action, { backgroundColor: color }]}>
-      <Text style={styles.actionLabel}>Delete</Text>
+      <Text style={styles.actionLabel}>{s.commonDelete}</Text>
     </Pressable>
   );
 }

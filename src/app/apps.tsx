@@ -12,6 +12,7 @@ import { SECTION_INSET } from '@/components/DisclosureRow';
 import { EmptyState } from '@/components/EmptyState';
 import { WidgetPreviewCard } from '@/components/WidgetPreviewCard';
 import type { LauncherApp } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore } from '@/store/LauncherStore';
 
 /**
@@ -51,6 +52,7 @@ const PREVIEW_INSET = 12;
 
 export default function AppListScreen() {
   const store = useLauncherStore();
+  const s = useStrings();
   const { colors } = useNavigationTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -91,7 +93,7 @@ export default function AppListScreen() {
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <Stack.Screen
         options={{
-          title: 'Apps',
+          title: s.sectionApps,
           // NOT negotiable, and not a style choice. The large title is what the
           // hardcoded LARGE_TITLE_HEADER_HEIGHT above compensates for; switching
           // to an inline title leaves the padding 52pt too tall and the list
@@ -118,12 +120,12 @@ export default function AppListScreen() {
                   { color: colors.primary, fontWeight: editing ? '600' : '400' },
                 ]}
               >
-                {editing ? 'Done' : 'Edit'}
+                {editing ? s.appsDone : s.appsEdit}
               </Text>
             </Pressable>
           ),
           headerRight: () => (
-            <Pressable onPress={() => openForm()} hitSlop={8} accessibilityLabel="Add app">
+            <Pressable onPress={() => openForm()} hitSlop={8} accessibilityLabel={s.a11yAddApp}>
               <SymbolView name="plus" size={22} tintColor={colors.primary} style={styles.icon} />
             </Pressable>
           ),

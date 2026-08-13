@@ -33,6 +33,11 @@ const TIMEOUT_MS = 8000;
 const SEARCH_LANGUAGE: Record<AppLanguage, string> = {
   'pt-BR': 'pt',
   en: 'en',
+  // Both checked against the live endpoint rather than assumed: 'es' returns
+  // Tokio / Japón and 'ja' returns 東京都 / 日本, so the subtitle is localised
+  // too and city search costs nothing for either.
+  es: 'es',
+  ja: 'ja',
 };
 
 /**

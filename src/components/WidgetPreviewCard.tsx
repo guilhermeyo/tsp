@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { LauncherRowLabel } from './LauncherRowLabel';
 
 import type { LauncherConfig } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { backgroundColor, flexAlign } from '@/theme/tokens';
 
 /** Matches `WidgetPreviewCard.limit`. systemLarge shows six rows; so does this. */
@@ -25,6 +26,12 @@ export interface WidgetPreviewCardProps {
  */
 export function WidgetPreviewCard({ config, limit = PREVIEW_LIMIT }: WidgetPreviewCardProps) {
   const { theme } = config;
+  // This is the one thing the card does not take from its `config` prop. Both
+  // call sites pass `store.config`, so the stored language and the previewed
+  // one are the same value; reading it through the hook instead keeps the empty
+  // sentence resolved by exactly the mechanism every other label on the screen
+  // uses, which is what stops it drifting into a second resolution path.
+  const s = useStrings();
   // Apps 7 and beyond are simply not previewed. No "and N more" indicator: the
   // real widget has no such affordance either, and inventing one here would
   // preview something the widget will never draw.
@@ -50,10 +57,15 @@ export function WidgetPreviewCard({ config, limit = PREVIEW_LIMIT }: WidgetPrevi
       */}
       <View style={[styles.rows, { alignItems: flexAlign(theme.alignment) }]}>
         {previewed.length === 0 ? (
-          // Hard-coded English, exactly as the widget has it. The bundled app
-          // names are Portuguese; this string is not, and matching the widget
-          // matters more than being consistent with them.
-          <LauncherRowLabel name="Add apps in Simple Phone" theme={theme} dimmed lineLimit={2} />
+          // The DECLARED TWIN of `emptyMessage` in
+          // `ios/SimplePhoneWidget/WidgetViews.swift`, which draws the same
+          // sentence on the home screen from a Swift switch it cannot share with
+          // this catalog: the extension's `Bundle.main` is the .appex and cannot
+          // read the app's quotes.json. All four languages must match that
+          // switch word for word, or this preview disagrees with the widget
+          // sitting behind it. The bundled app NAMES stay Portuguese whatever
+          // this says -- they are user data, not copy.
+          <LauncherRowLabel name={s.widgetLauncherEmpty} theme={theme} dimmed lineLimit={2} />
         ) : (
           previewed.map((app) => <LauncherRowLabel key={app.id} name={app.name} theme={theme} />)
         )}

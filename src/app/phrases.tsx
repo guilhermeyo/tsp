@@ -1,4 +1,4 @@
-import { Stack, useRouter, useTheme as useNavigationTheme } from 'expo-router';
+import { Stack, useTheme as useNavigationTheme } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
@@ -12,26 +12,23 @@ import {
   View,
 } from 'react-native';
 
-import { DisclosureRow, ROW_PADDING, SECTION_INSET } from '@/components/DisclosureRow';
-import {
-  QUOTE_DURATIONS,
-  QUOTE_DURATION_LABEL,
-  QUOTE_DURATION_MS,
-} from '@/domain/quotes';
+import { ROW_PADDING, SECTION_INSET } from '@/components/DisclosureRow';
+import { QUOTE_DURATIONS, QUOTE_DURATION_MS } from '@/domain/quotes';
 import { countNeverShown, parseQuoteCounts, readQuoteStatsJSON } from '@/domain/quoteStats';
-import { LANGUAGE_LABELS } from '@/domain/types';
+import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore } from '@/store/LauncherStore';
 import { fontFamilyFor } from '@/theme/fonts';
 
 /**
- * The phrase feature, whole: turn it on, choose its language, set how long it
- * stays, add your own, delete what you do not want.
+ * The phrase feature, whole: turn it on, set how long it stays, add your own,
+ * delete what you do not want.
  *
- * The on/off switch used to live in Appearance and the language used to be a
- * list of its own right here. Both moved for the same reason: the root is a hub
- * now, so a feature owns its own screen, and language stopped being a property
- * of the phrase catalog the moment the weather widget started rendering weekday
- * names with it. The row below only points at the one place that setting lives.
+ * The on/off switch used to live in Appearance and there used to be a Language
+ * row here as well. Both moved for the same reason: the root is a hub now, so a
+ * feature owns its own screen. Language went further and left entirely — it
+ * stopped being a property of the phrase catalog the moment the weather widget
+ * started rendering weekday names with it, and now that it also picks the
+ * interface strings it is plainly global. The hub row is its only surface.
  *
  * Switching language REPLACES the bundled set and keeps anything the user
  * wrote, which the store handles. That asymmetry is deliberate: the bundled
@@ -40,8 +37,8 @@ import { fontFamilyFor } from '@/theme/fonts';
  */
 export default function PhrasesScreen() {
   const store = useLauncherStore();
-  const { quotes, theme, language } = store.config;
-  const router = useRouter();
+  const { quotes, theme } = store.config;
+  const s = useStrings();
   const { colors } = useNavigationTheme();
   const [draft, setDraft] = useState('');
 
@@ -75,7 +72,7 @@ export default function PhrasesScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: 'Phrases' }} />
+      <Stack.Screen options={{ title: s.sectionPhrases }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         style={{ backgroundColor: colors.background }}
@@ -90,28 +87,17 @@ export default function PhrasesScreen() {
             turning the feature back on should find the list where it was left.
           */}
           <View style={styles.row}>
-            <Text style={[styles.rowLabel, { color: colors.text }]}>Show a phrase</Text>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>{s.phrasesEnable}</Text>
             <Switch
               value={quotes.enabled}
               onValueChange={(value) => store.setQuotesEnabled(value)}
             />
           </View>
-
-          <View style={[styles.separator, { backgroundColor: colors.border }]} />
-
-          {/*
-            A pointer, not a picker. The value shown is `config.language`, the
-            authoritative copy; `quotes.language` mirrors it and is written by
-            the same reducer case, so there is nothing here that could disagree.
-          */}
-          <DisclosureRow
-            label="Language"
-            value={LANGUAGE_LABELS[language]}
-            onPress={() => router.push('/language')}
-          />
         </View>
 
-        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>How long it stays</Text>
+        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>
+          {s.phrasesSectionDuration}
+        </Text>
 
         <View style={[styles.card, { backgroundColor: colors.card }]}>
           {QUOTE_DURATIONS.map((duration, index) => (
@@ -126,11 +112,11 @@ export default function PhrasesScreen() {
                 onPress={() => store.setQuoteDuration(duration)}
               >
                 <Text style={[styles.rowLabel, { color: colors.text }]}>
-                  {QUOTE_DURATION_LABEL[duration]}
+                  {s.quoteDurationLabels[duration]}
                 </Text>
                 <View style={styles.disclosure}>
                   <Text style={[styles.value, { color: secondaryLabel }]}>
-                    {`${(QUOTE_DURATION_MS[duration] / 1000).toFixed(1)}s`}
+                    {s.phrasesDurationSeconds(QUOTE_DURATION_MS[duration] / 1000)}
                   </Text>
                   {duration === quotes.duration && (
                     <SymbolView name="checkmark" size={15} weight="semibold" tintColor={colors.primary} />
@@ -141,14 +127,16 @@ export default function PhrasesScreen() {
           ))}
         </View>
 
-        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>Add your own</Text>
+        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>
+          {s.phrasesSectionAdd}
+        </Text>
 
         <View style={[styles.card, { backgroundColor: colors.card }]}>
           <View style={styles.row}>
             <TextInput
               value={draft}
               onChangeText={setDraft}
-              placeholder="Keep it short"
+              placeholder={s.phrasesAddHint}
               placeholderTextColor={secondaryLabel}
               style={[styles.input, { color: colors.text }]}
               keyboardAppearance={theme.isDark ? 'dark' : 'light'}
@@ -159,7 +147,7 @@ export default function PhrasesScreen() {
               <Text
                 style={[styles.action, { color: canAdd ? colors.primary : secondaryLabel }]}
               >
-                Add
+                {s.commonAdd}
               </Text>
             </Pressable>
           </View>
@@ -173,50 +161,57 @@ export default function PhrasesScreen() {
         */}
         <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>
           {neverShown === 0
-            ? `${quotes.items.length} in rotation`
-            : `${quotes.items.length} in rotation, ${neverShown} not yet shown`}
+            ? s.phrasesRotation(quotes.items.length)
+            : s.phrasesRotationUnshown(quotes.items.length, neverShown)}
         </Text>
 
         <View style={[styles.card, { backgroundColor: colors.card }]}>
-          {quotes.items.map((item, index) => (
-            <Fragment key={`${item}-${index}`}>
-              {index > 0 && (
-                <View style={[styles.separator, { backgroundColor: colors.border }]} />
-              )}
-              <View style={styles.row}>
-                <Text
-                  style={[
-                    styles.quote,
-                    { color: colors.text, fontFamily: fontFamilyFor(theme.font) },
-                  ]}
-                >
-                  {item}
-                </Text>
-                {/*
-                  Fixed width and right aligned so the minus buttons stay in one
-                  straight line down the card whatever the numbers are, with
-                  tabular figures so the digits do not jitter as a count crosses
-                  into three. Zero renders blank but still holds the slot, so
-                  nothing shifts the first time a number lands.
-                */}
-                <Text
-                  style={[styles.count, { color: secondaryLabel }]}
-                  accessibilityLabel={
-                    counts[item] === undefined ? 'Not yet shown' : `Shown ${counts[item]} times`
-                  }
-                >
-                  {counts[item] === undefined ? '' : String(counts[item])}
-                </Text>
-                <Pressable
-                  onPress={() => store.removeQuoteAt(index)}
-                  hitSlop={8}
-                  accessibilityLabel={`Remove ${item}`}
-                >
-                  <SymbolView name="minus.circle.fill" size={20} tintColor="#FF453A" />
-                </Pressable>
-              </View>
-            </Fragment>
-          ))}
+          {quotes.items.map((item, index) => {
+            // Read into a local rather than indexing three times: `counts` is
+            // keyed by an arbitrary string, which TypeScript will not narrow
+            // through an element access, and `a11yShownTimes` takes a number.
+            const count = counts[item];
+
+            return (
+              <Fragment key={`${item}-${index}`}>
+                {index > 0 && (
+                  <View style={[styles.separator, { backgroundColor: colors.border }]} />
+                )}
+                <View style={styles.row}>
+                  <Text
+                    style={[
+                      styles.quote,
+                      { color: colors.text, fontFamily: fontFamilyFor(theme.font) },
+                    ]}
+                  >
+                    {item}
+                  </Text>
+                  {/*
+                    Fixed width and right aligned so the minus buttons stay in one
+                    straight line down the card whatever the numbers are, with
+                    tabular figures so the digits do not jitter as a count crosses
+                    into three. Zero renders blank but still holds the slot, so
+                    nothing shifts the first time a number lands.
+                  */}
+                  <Text
+                    style={[styles.count, { color: secondaryLabel }]}
+                    accessibilityLabel={
+                      count === undefined ? s.a11yNotYetShown : s.a11yShownTimes(count)
+                    }
+                  >
+                    {count === undefined ? '' : String(count)}
+                  </Text>
+                  <Pressable
+                    onPress={() => store.removeQuoteAt(index)}
+                    hitSlop={8}
+                    accessibilityLabel={s.a11yRemovePhrase(item)}
+                  >
+                    <SymbolView name="minus.circle.fill" size={20} tintColor="#FF453A" />
+                  </Pressable>
+                </View>
+              </Fragment>
+            );
+          })}
         </View>
       </ScrollView>
     </>

@@ -39,12 +39,13 @@ export interface LauncherStore {
   addQuote(text: string): void;
   removeQuoteAt(index: number): void;
   /**
-   * The app's one language setting. Sets `config.language` AND reseeds the
-   * phrases from the new language's bundle, KEEPING anything the user wrote.
+   * The app's one language setting: the UI strings, the bundled phrases, the
+   * city search and the widget's weekday names all follow it.
    *
-   * This replaces the old `setQuoteLanguage`. There is exactly one writer for
-   * the two copies of the value, which is the only thing that makes keeping a
-   * mirror inside `quotes` safe.
+   * Sets `config.language` and reseeds the phrases from the new language's
+   * bundle, KEEPING every line the user wrote themselves. That side effect is
+   * why the language is never resolved from the phone at read time — see
+   * `AppLanguage` in @/domain/types.
    */
   setLanguage(language: AppLanguage): void;
   setWeatherEnabled(enabled: boolean): void;
@@ -124,21 +125,22 @@ function reduce(state: LauncherConfig, action: Action): LauncherConfig {
 
     case 'setLanguage': {
       const { language } = action;
-      // Both copies have to be checked. If only the mirror were stale, skipping
-      // the update here would leave the phrase screen and the weather widget
-      // reading different languages until the user changed something else.
-      if (state.language === language && state.quotes.language === language) return state;
-      // Anything not in the OLD bundle is the user's own writing, so it
-      // survives the switch. Without this, changing language once would throw
-      // away every line they added, silently, with no undo.
-      const previous = new Set(BUNDLED_QUOTES[state.quotes.language]);
+      if (state.language === language) return state;
+      // `state.language` is the OUTGOING language and is the only thing that
+      // may be diffed against. It is the one line in this file that can destroy
+      // the user's writing: diff against the incoming language instead and
+      // every phrase they typed disappears on the next switch, silently, with
+      // no undo; diff against nothing and the outgoing 101 pile up on top of
+      // the new ones. Anything not in the outgoing bundle is theirs, so it
+      // survives in its original order, which also makes a round trip
+      // (pt-BR to ja and back) return exactly the list they started with.
+      const previous = new Set(BUNDLED_QUOTES[state.language]);
       const written = state.quotes.items.filter((item) => !previous.has(item));
       return {
         ...state,
         language,
         quotes: {
           ...state.quotes,
-          language,
           items: [...BUNDLED_QUOTES[language], ...written],
         },
       };

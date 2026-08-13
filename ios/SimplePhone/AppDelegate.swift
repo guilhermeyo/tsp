@@ -106,12 +106,23 @@ private enum Relay {
   /// did nothing. That silence is indistinguishable from opening the wrong app
   /// or from a scheme Apple changed, and diagnosing it costs hours.
   private static func presentFailure(_ target: URL, window: UIWindow?) {
+    // The copy comes from the relay block in `quotes.json`, which is already a
+    // resource of this target, rather than from a JavaScript catalog: this runs
+    // on a cold launch where React Native may not have a bridge yet, so there is
+    // nothing on the JS side to ask.
+    //
+    // The URL is SUBSTITUTED into the sentence, not concatenated around it. The
+    // Japanese line puts the whole explanation before the URL, which no amount
+    // of prefix-plus-suffix can express.
+    let strings = QuoteScreen.relayStrings(language: QuoteScreen.configuredLanguage())
     let alert = UIAlertController(
-      title: "Could not open this",
-      message: "iOS refused to open:\n\n\(target.absoluteString)\n\n"
-        + "No installed app handles it, or the scheme changed.",
+      title: strings["title"],
+      message: strings["body"]?.replacingOccurrences(of: "%@", with: target.absoluteString),
       preferredStyle: .alert)
-    alert.addAction(UIAlertAction(title: "OK", style: .default))
+    // The only literal left, and it is the one that has to survive a missing
+    // resource: an action with no title is a button the user cannot read, on an
+    // alert with no other way out.
+    alert.addAction(UIAlertAction(title: strings["ok"] ?? "OK", style: .default))
 
     var presenter = window?.rootViewController ?? QuoteScreen.failurePresenter()
     while let presented = presenter?.presentedViewController {

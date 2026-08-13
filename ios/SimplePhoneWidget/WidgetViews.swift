@@ -54,6 +54,31 @@ struct LauncherWidgetView: View {
     }
 
     private var emptyLabel: some View {
-        LauncherRowLabel(name: "Add apps in Simple Phone", theme: theme, dimmed: true, lineLimit: 2)
+        LauncherRowLabel(
+            name: Self.emptyMessage(language: entry.language),
+            theme: theme,
+            dimmed: true,
+            lineLimit: 2)
+    }
+
+    /// The DECLARED TWIN of `src/components/WidgetPreviewCard.tsx`, which draws
+    /// the same sentence in the in-app preview from the JS catalog. All four
+    /// must match word for word, or the preview on the Appearance screen
+    /// disagrees with the widget sitting on the home screen behind it.
+    ///
+    /// It lives in Swift rather than in that catalog because the extension's
+    /// `Bundle.main` is the .appex: this process cannot read the app bundle's
+    /// quotes.json. Same primary-subtag matching as
+    /// `WeatherWidgetView.emptyMessage`, and for the same reasons — see the
+    /// comment there for why it is `prefix(2)` and not `hasPrefix`.
+    ///
+    /// "Simple Phone" is the brand and is not translated in any of the four.
+    private static func emptyMessage(language: String) -> String {
+        switch language.lowercased().prefix(2) {
+        case "pt": return "Adicione apps no Simple Phone"
+        case "es": return "Añade apps en Simple Phone"
+        case "ja": return "Simple Phoneでアプリを追加"
+        default: return "Add apps in Simple Phone"
+        }
     }
 }

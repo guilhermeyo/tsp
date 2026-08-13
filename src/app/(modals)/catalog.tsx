@@ -3,9 +3,10 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CatalogRow } from '@/components/CatalogRow';
-import { byCategory } from '@/domain/catalog';
+import { byCategory, categoryLabel, entryName } from '@/domain/catalog';
 import type { CatalogEntry } from '@/domain/catalog';
-import { useTheme } from '@/store/LauncherStore';
+import { useStrings } from '@/i18n/useStrings';
+import { useLauncherStore, useTheme } from '@/store/LauncherStore';
 
 /**
  * SCREEN 3 — the catalog picker. Twin of `CatalogPickerView.swift`.
@@ -96,13 +97,21 @@ export default function CatalogScreen() {
   const theme = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const s = useStrings();
+  const { language } = useLauncherStore().config;
   const colors = palette(theme.isDark);
 
-  function select(entry: CatalogEntry): void {
+  function select(entry: CatalogEntry, name: string): void {
+    // The LOCALIZED name is handed over, not `entry.name`. An app's name is
+    // user data in this app -- the six bundled defaults are Portuguese for the
+    // same reason -- so prefilling "Messages" after the user tapped a row
+    // reading "Mensagens" would contradict the tap. The url is the wire value
+    // and is handed over untouched.
+    //
     // Order copied from Swift: hand the entry over first, dismiss second. The
     // form is still mounted underneath, so it receives the values before the
     // sheet starts animating away.
-    catalogSelection.pick(entry);
+    catalogSelection.pick({ name, urlString: entry.urlString });
     router.back();
   }
 
@@ -110,7 +119,7 @@ export default function CatalogScreen() {
     <View style={[styles.page, { backgroundColor: colors.page }]}>
       <Stack.Screen
         options={{
-          title: 'Catalog',
+          title: s.catalogTitle,
           // Inline, never large: `.navigationBarTitleDisplayMode(.inline)`.
           // Already the default, stated because the list screen opts INTO large.
           headerLargeTitleEnabled: false,
@@ -121,7 +130,7 @@ export default function CatalogScreen() {
           // something", which is not what Cancel does here.
           headerLeft: () => (
             <Pressable onPress={() => router.back()} hitSlop={12}>
-              <Text style={[styles.headerButton, { color: colors.accent }]}>Cancel</Text>
+              <Text style={[styles.headerButton, { color: colors.accent }]}>{s.commonCancel}</Text>
             </Pressable>
           ),
         }}
@@ -131,33 +140,44 @@ export default function CatalogScreen() {
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
         contentInsetAdjustmentBehavior="automatic"
       >
+        {/*
+          `section.category` and `entry.name` stay the ENGLISH keys throughout:
+          they are the grouping key and the entry identity, and only their
+          rendering is localized. Both lookups happen here rather than inside
+          `CatalogRow`, so the row renders whatever it is handed and never has
+          to know which language it is in.
+        */}
         {byCategory.map((section) => (
           <View key={section.category}>
             <Text style={[styles.sectionHeader, { color: colors.secondary }]}>
-              {section.category}
+              {categoryLabel(section.category, language)}
             </Text>
 
             <View style={[styles.card, { backgroundColor: colors.card }]}>
-              {section.entries.map((entry, index) => (
-                <View key={entry.id}>
-                  {index > 0 && (
-                    <View style={[styles.separator, { backgroundColor: colors.separator }]} />
-                  )}
-                  <Pressable
-                    onPress={() => select(entry)}
-                    style={({ pressed }) => [
-                      styles.row,
-                      pressed ? { backgroundColor: colors.pressed } : null,
-                    ]}
-                  >
-                    <CatalogRow
-                      entry={entry}
-                      labelColor={colors.label}
-                      captionColor={colors.secondary}
-                    />
-                  </Pressable>
-                </View>
-              ))}
+              {section.entries.map((entry, index) => {
+                const name = entryName(entry, language);
+                return (
+                  <View key={entry.id}>
+                    {index > 0 && (
+                      <View style={[styles.separator, { backgroundColor: colors.separator }]} />
+                    )}
+                    <Pressable
+                      onPress={() => select(entry, name)}
+                      style={({ pressed }) => [
+                        styles.row,
+                        pressed ? { backgroundColor: colors.pressed } : null,
+                      ]}
+                    >
+                      <CatalogRow
+                        entry={entry}
+                        name={name}
+                        labelColor={colors.label}
+                        captionColor={colors.secondary}
+                      />
+                    </Pressable>
+                  </View>
+                );
+              })}
             </View>
           </View>
         ))}
