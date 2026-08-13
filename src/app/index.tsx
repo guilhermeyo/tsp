@@ -1,15 +1,10 @@
 import Constants from 'expo-constants';
 import { useRouter, useTheme as useNavigationTheme } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { DisclosureRow, ROW_PADDING, SECTION_INSET } from '@/components/DisclosureRow';
-import { WeatherPreviewCard } from '@/components/WeatherPreviewCard';
-import { WidgetPreviewCard } from '@/components/WidgetPreviewCard';
 import { FONT_LABELS, LANGUAGE_LABELS, SIZE_LABELS } from '@/domain/types';
 import { useLauncherStore } from '@/store/LauncherStore';
-
-/** Matches the preview inset the Appearance screen uses. See DisclosureRow. */
-const PREVIEW_INSET = 12;
 
 /**
  * THE HUB. Every section of the app is one tap from here.
@@ -26,9 +21,17 @@ const PREVIEW_INSET = 12;
  * cancel-or-confirm semantics, which is only the app form and the catalog.
  *
  * There is no plus button here. Adding what, from a screen that lists five
- * different things? The preview card is the affordance instead: it is the
- * app list, it looks like the app list, and tapping it lands on the list with
- * its own plus. Adding an app from a cold launch is still two taps.
+ * different things? The Apps row is the affordance instead, and it lands on the
+ * list with its own plus: adding an app from a cold launch is two taps.
+ *
+ * NOTHING BUT ROWS. Both widget previews used to sit at the top of this screen
+ * and both have moved next to the thing they preview -- the launcher card to
+ * /apps, the forecast to /weather. They were also what made this screen scroll,
+ * and a screen that scrolls under a translucent large title puts a hard-edged
+ * black card behind the blur, which is what the previews looked broken doing.
+ * Two grouped cards and a footer fit without scrolling at every text size, so
+ * the title never collapses and nothing can pass under the bar. Do not put a
+ * preview back here.
  */
 export default function HubScreen() {
   const store = useLauncherStore();
@@ -59,36 +62,6 @@ export default function HubScreen() {
       style={{ backgroundColor: colors.background }}
       contentContainerStyle={styles.content}
     >
-      {/*
-        No card behind it and no theme background painted around it:
-        WidgetPreviewCard is the only component in the app allowed to paint
-        `theme.backgroundColor`, and the note in _layout.tsx says why.
-      */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Apps"
-        style={styles.previewRow}
-        onPress={() => router.push('/apps')}
-      >
-        <WidgetPreviewCard config={store.config} />
-      </Pressable>
-
-      {/*
-        The second widget gets the same treatment as the first: shown, not
-        described. Hidden entirely when it is switched off, because a preview of
-        something the user turned off is just noise.
-      */}
-      {weather.enabled && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Weather"
-          style={styles.previewRow}
-          onPress={() => router.push('/weather')}
-        >
-          <WeatherPreviewCard weather={weather} theme={theme} language={language} />
-        </Pressable>
-      )}
-
       {/* The features. Each one is something the widget or the relay renders. */}
       <View style={[styles.card, { backgroundColor: colors.card }]}>
         <DisclosureRow label="Apps" value={`${apps.length}`} onPress={() => router.push('/apps')} />
@@ -148,10 +121,6 @@ export default function HubScreen() {
 const styles = StyleSheet.create({
   content: {
     paddingBottom: 32,
-  },
-  previewRow: {
-    paddingHorizontal: SECTION_INSET + PREVIEW_INSET,
-    paddingVertical: PREVIEW_INSET,
   },
   card: {
     marginTop: 24,

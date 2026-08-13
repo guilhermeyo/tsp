@@ -110,7 +110,21 @@ export function WeatherPreviewCard({
   const family = fontFamilyFor(theme.font);
 
   return (
-    <View style={[styles.card, { backgroundColor: theme.isDark ? '#000000' : '#FFFFFF' }]}>
+    <View
+      style={[
+        styles.card,
+        {
+          backgroundColor: theme.isDark ? '#000000' : '#FFFFFF',
+          // The same hairline WidgetPreviewCard draws, for the same reason: the
+          // fill is the widget's own background, which in dark mode is #000000
+          // on a page that is rgb(1, 1, 1). Without an edge there is no card,
+          // just text floating on the screen. Copied from WidgetPreviewCard
+          // rather than re-picked, so the two widget mocks match by
+          // construction.
+          borderColor: theme.isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)',
+        },
+      ]}
+    >
       {state.status === 'ok' ? (
         <View style={styles.row}>
           {state.days.map((day, index) => (
@@ -138,7 +152,12 @@ export function WeatherPreviewCard({
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 22,
+    // 24 and a 1pt border, matching WidgetPreviewCard. The two mocks sit two
+    // taps apart and any difference between them reads as one of them being
+    // wrong.
+    borderRadius: 24,
+    borderWidth: 1,
+    overflow: 'hidden',
     paddingHorizontal: 8,
     paddingVertical: 14,
     minHeight: 108,

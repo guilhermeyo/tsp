@@ -39,7 +39,11 @@ interface AppRowProps {
   app: LauncherApp;
   /** Edit mode swaps swipe-to-delete for the minus/grabber chrome, as `EditButton` does. */
   editing: boolean;
-  /** Open the edit form. Never called while editing: the row is not tappable then. */
+  /**
+   * Open the edit form. Live in BOTH modes: Edit is where a user goes to change
+   * the list, so a row that refuses to open there sends them out of Edit to
+   * rename and back into it to reorder.
+   */
   onPress: () => void;
   onDelete: () => void;
 }
@@ -103,8 +107,13 @@ export function AppRow({ app, editing, onPress, onDelete }: AppRowProps) {
       )}
     >
       <Pressable
+        // Not disabled in Edit mode. Nothing else has to change for that: the
+        // minus and the grabber are nested Pressables, and a nested one wins the
+        // responder over its parent, so only the middle of the row opens the
+        // form. The list's pan is live in Edit mode and can still steal a tap
+        // that drifts, which is the same forgiveness as tapping a row on a list
+        // that is scrolling.
         onPress={onPress}
-        disabled={editing}
         onLayout={handleLayout}
         // Opaque: this is what the red slides out from underneath.
         style={[styles.row, { backgroundColor: colors.card }]}
