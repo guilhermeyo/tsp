@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture } from 'react-native-gesture-handler';
 import ReorderableList from 'react-native-reorderable-list';
 import type { ReorderableListReorderEvent } from 'react-native-reorderable-list';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppRow } from '@/components/AppRow';
 import { EmptyState } from '@/components/EmptyState';
@@ -20,10 +21,22 @@ import { useLauncherStore } from '@/store/LauncherStore';
  * which is trailing on iOS), and `RootView` contributed the gear. Net result is
  * Edit on the left, plus then gear on the right.
  */
+/**
+ * Height of an EXPANDED iOS large-title navigation bar, below the status bar:
+ * 44pt of standard bar plus 52pt of large title.
+ *
+ * Hardcoded on purpose. `useHeaderHeight()` cannot be used here: for a large
+ * title it reports the COLLAPSED height and then receives debounced native
+ * updates as the title shrinks, so a padding driven by it would move while the
+ * user scrolls.
+ */
+const LARGE_TITLE_HEADER_HEIGHT = 96;
+
 export default function AppListScreen() {
   const store = useLauncherStore();
   const { colors } = useNavigationTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [editing, setEditing] = useState(false);
 
   const apps = store.config.apps;
@@ -106,8 +119,25 @@ export default function AppListScreen() {
           onReorder={handleReorder}
           panGesture={dragGesture}
           dragEnabled={editing}
-          // Lets the native large title collapse as the list scrolls.
-          contentInsetAdjustmentBehavior="automatic"
+          // The large title's vertical offset lives in the CONTENT here, not in
+          // a UIKit content inset, and that is load-bearing.
+          //
+          // react-native-reorderable-list has no notion of contentInset (grep
+          // the package: zero hits) and models scroll position as a shared value
+          // seeded to 0, so it assumes a resting contentOffset.y of 0. Under a
+          // large title, react-native-screens lays the content out at screen
+          // y=0 and UIKit parks contentOffset.y at about -155 via
+          // adjustedContentInset. The library disables scrolling when a drag
+          // starts, UIKit then recomputes the "automatic" inset to zero, and the
+          // whole content view slams up by the header height, painting every row
+          // over the nav bar. The dragged cell alone gets compensated back down,
+          // which is why one row stays put with a gap above it.
+          //
+          // Padding cannot be recomputed out from under us, so resting offset is
+          // a true 0 and there is nothing left to collapse. The title still
+          // collapses on scroll because UIKit drives that from contentOffset.
+          contentInsetAdjustmentBehavior="never"
+          contentContainerStyle={{ paddingTop: insets.top + LARGE_TITLE_HEADER_HEIGHT }}
           renderItem={({ item, index }) => (
             <AppRow
               app={item}
