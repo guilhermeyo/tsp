@@ -507,7 +507,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = EF104698A684A8CCFCF0B92C /* Pods-SimplePhone.debug.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = expo;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = SimplePhone/SimplePhone.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
@@ -545,7 +545,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 7E2FC156FC87EBFB33C2B91A /* Pods-SimplePhone.release.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = expo;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = SimplePhone/SimplePhone.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
