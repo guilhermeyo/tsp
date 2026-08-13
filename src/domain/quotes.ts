@@ -29,18 +29,38 @@ export type QuoteLanguage = 'pt-BR' | 'en';
  * The felt pause is longer than the number: iOS spends its own moment on the
  * app-to-app transition after this elapses.
  */
-export type QuoteDuration = 'quick' | 'short' | 'medium' | 'long';
+export type QuoteDuration = 'instant' | 'quick' | 'short' | 'medium' | 'long';
 
-export const QUOTE_DURATIONS: readonly QuoteDuration[] = ['quick', 'short', 'medium', 'long'];
+export const QUOTE_DURATIONS: readonly QuoteDuration[] = [
+  'instant',
+  'quick',
+  'short',
+  'medium',
+  'long',
+];
 
+/**
+ * `instant` is zero ADDED delay, not a very small one, and it is the default.
+ *
+ * The phrase is a cover, not a pause. Its job is that the app list never
+ * appears during the handoff, and the handoff already takes a few hundred
+ * milliseconds of iOS transition that nothing can shorten. Painting a phrase
+ * into exactly that window costs nothing and removes the only thing anyone
+ * disliked about the relay.
+ *
+ * The longer values remain for the other reading of the feature, where the
+ * phrase is a deliberate beat of friction between the impulse and the app.
+ */
 export const QUOTE_DURATION_MS: Record<QuoteDuration, number> = {
-  quick: 1000,
-  short: 1800,
+  instant: 0,
+  quick: 800,
+  short: 1500,
   medium: 2600,
   long: 4000,
 };
 
 export const QUOTE_DURATION_LABEL: Record<QuoteDuration, string> = {
+  instant: 'Instant',
   quick: 'Quick',
   short: 'Short',
   medium: 'Medium',
@@ -48,7 +68,13 @@ export const QUOTE_DURATION_LABEL: Record<QuoteDuration, string> = {
 };
 
 export function isQuoteDuration(value: unknown): value is QuoteDuration {
-  return value === 'quick' || value === 'short' || value === 'medium' || value === 'long';
+  return (
+    value === 'instant' ||
+    value === 'quick' ||
+    value === 'short' ||
+    value === 'medium' ||
+    value === 'long'
+  );
 }
 
 export const QUOTE_LANGUAGES: readonly QuoteLanguage[] = ['pt-BR', 'en'];

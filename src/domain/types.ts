@@ -85,7 +85,7 @@ export const DEFAULT_THEME: Theme = {
 export const DEFAULT_QUOTES: Quotes = {
   enabled: true,
   language: 'pt-BR',
-  duration: 'short',
+  duration: 'instant',
   items: [],
 };
 

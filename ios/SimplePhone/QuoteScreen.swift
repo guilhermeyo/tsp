@@ -72,6 +72,12 @@ enum QuoteScreen {
 
     overlay.rootViewController = controller
     overlay.makeKeyAndVisible()
+    // Forced synchronously. With a zero hold the target is opened in this same
+    // runloop pass, and without this the app can start backgrounding before the
+    // overlay has drawn -- which would show the very thing the phrase exists to
+    // hide.
+    controller.view.layoutIfNeeded()
+    overlay.layer.displayIfNeeded()
     window = overlay
     isHolding = true
 
@@ -145,6 +151,8 @@ enum QuoteScreen {
       items: items,
       isDark: theme?["isDark"] as? Bool ?? true,
       font: theme?["font"] as? String ?? "monospaced",
-      holdSeconds: min(max(ms / 1000, 0.4), 8))
+      // 0 is meaningful here: no ADDED delay, the phrase merely covers the
+      // transition iOS performs anyway.
+      holdSeconds: min(max(ms / 1000, 0), 8))
   }
 }

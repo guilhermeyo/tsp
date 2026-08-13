@@ -54,6 +54,14 @@ private enum Relay {
         open(target, window: window)
         return
       }
+      // A zero hold opens NOW, in this same pass. The phrase has already been
+      // forced to draw, so it covers the handoff without adding a millisecond
+      // to it. Scheduling even a zero-delay timer would cost a runloop turn for
+      // nothing.
+      guard hold > 0 else {
+        open(target, window: window)
+        return
+      }
       DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
         open(target, window: window)
       }
