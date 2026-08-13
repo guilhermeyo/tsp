@@ -41,15 +41,44 @@ function entry(
 }
 
 export const CATALOG: readonly CatalogEntry[] = [
+  // Shortcuts — the escape hatch for everything a URL scheme cannot express.
+  //
+  // A custom scheme names a PROTOCOL, not an app. When two apps register the
+  // same one (WhatsApp and WhatsApp Business both claim whatsapp://) iOS picks
+  // a winner and no public API lets the caller choose. Apple's own apps have
+  // the mirror problem: sms:// names "compose a message", not "open Messages".
+  //
+  // The Shortcuts app's "Open App" action targets an app by IDENTITY, from a
+  // picker, so it has neither problem. Running that shortcut by name is the
+  // only reliable way to open one specific installed app. It costs a visible
+  // hop through Shortcuts and one shortcut per app, which is exactly the
+  // trade the dedicated dumb-phone launchers on the App Store make.
+  entry('Shortcut (template)', 'shortcuts://run-shortcut?name=REPLACE%20ME', 'Shortcuts', {
+    verified: false,
+    note:
+      'Create a shortcut whose only action is "Open App" pointing at the app you want, then ' +
+      'put its name here, percent-encoded (a space is %20). Use this when a scheme opens the ' +
+      'wrong app, such as WhatsApp Business instead of WhatsApp.',
+  }),
+
   // Messaging
-  entry('WhatsApp', 'whatsapp://', 'Messaging'),
+  entry('WhatsApp', 'whatsapp://', 'Messaging', {
+    note:
+      'Claimed by BOTH WhatsApp and WhatsApp Business. With both installed iOS chooses, and it ' +
+      'often chooses Business. Use a Shortcut to target one of them specifically.',
+  }),
   entry('Telegram', 'tg://', 'Messaging'),
   entry('Messenger', 'fb-messenger://', 'Messaging'),
-  entry('Messages', 'messages://', 'Messaging', {
-    note: 'Opens the Messages app on the conversation list. Verified on iOS 26.',
+  entry('Messages', 'ichat://', 'Messaging', {
+    verified: false,
+    note:
+      'iOS 26 made sms://, messages:// and imessage:// all open the COMPOSE sheet instead of ' +
+      'the conversation list, which they did correctly through iOS 18. ichat:// is the ' +
+      'community-reported scheme that still lands on the list. Undocumented and unverified ' +
+      'here — test on device, and fall back to a Shortcut if it stops working.',
   }),
   entry('New message', 'sms://', 'Messaging', {
-    note: 'Opens the compose sheet, not the app. Use "Messages" to open the app itself.',
+    note: 'Opens the compose sheet with an empty To: field. This is what sms:// is actually for.',
   }),
 
   // Social
