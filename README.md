@@ -138,7 +138,7 @@ Widget row  ->  simplephonern://open?u=whatsapp%3A%2F%2F
           iOS launches Simple Phone with that URL
                           |
                           v
-          Expo Router maps host "open" to src/app/open.tsx
+   AppDelegate parses it natively, BEFORE React Native starts
                           |
                           v
           Linking.openURL("whatsapp://")  ->  WhatsApp opens
@@ -176,10 +176,15 @@ You get **one** `widgetURL` per widget and it covers the entire surface. Adding 
 layout would shadow the per-row `Link`s. Unifying the two paths under `Link` would produce a small
 widget that opens Simple Phone and stops there.
 
-### Failure is a deliberate silent no-op
+### Failure used to be a silent no-op. It is an alert now.
 
-If the target app is not installed, `Linking.openURL` rejects and `src/app/open.tsx` swallows it.
-No alert, no toast, no App Store fallback. The user taps and nothing happens.
+If the target app is not installed, the open fails and `AppDelegate.presentFailure` shows a
+localized alert built from the `relay` block in `quotes.json`.
+
+The original swallowed it: a row for an app you do not have simply did nothing, which is
+indistinguishable from opening the wrong app or from a scheme Apple changed, and costs hours to
+diagnose. The copy comes from a bundled resource rather than a JS catalog because this runs on a
+cold launch where React Native may have no bridge yet.
 
 This is faithful to the original `URLRelay.swift`, which had the same empty failure branch and a
 `TODO` about falling back to an App Store listing. It is a known gap carried forward on purpose. If

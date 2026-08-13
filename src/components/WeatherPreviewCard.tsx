@@ -62,7 +62,14 @@ type State =
  */
 function weekdayLabel(isoDate: string, language: AppLanguage): string {
   const date = new Date(`${isoDate}T12:00:00`);
-  return new Intl.DateTimeFormat(language, { weekday: 'short' }).format(date);
+  // Lowercased with the SAME language that produced it, mirroring the Swift
+  // twin's `lowercased(with: formatter.locale)`. A bare `toLowerCase()` is not
+  // good enough for the same reason it is not good enough there: Turkish maps a
+  // dotted I differently. Lowercase because that is TSP's voice, and because
+  // this card is supposed to be indistinguishable from the widget beside it.
+  return new Intl.DateTimeFormat(language, { weekday: 'short' })
+    .format(date)
+    .toLocaleLowerCase(language);
 }
 
 export function WeatherPreviewCard({

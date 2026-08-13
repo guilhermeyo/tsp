@@ -35,19 +35,27 @@ export function readQuoteStatsJSON(): string {
   }
 }
 
+/**
+ * Shared and frozen. The four early exits used to return a plain `{}`, so the
+ * prototype guarantee below held only when the blob parsed — and the blob is
+ * absent on every fresh install, which is exactly when the phrase list is all
+ * bundled and nothing has been shown yet.
+ */
+const NO_COUNTS: QuoteCounts = Object.freeze(Object.create(null) as Record<string, number>);
+
 export function parseQuoteCounts(raw: string): QuoteCounts {
-  if (raw === '') return {};
+  if (raw === '') return NO_COUNTS;
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return {};
+    return NO_COUNTS;
   }
-  if (typeof parsed !== 'object' || parsed === null) return {};
+  if (typeof parsed !== 'object' || parsed === null) return NO_COUNTS;
 
   const table = (parsed as { counts?: unknown }).counts;
-  if (typeof table !== 'object' || table === null || Array.isArray(table)) return {};
+  if (typeof table !== 'object' || table === null || Array.isArray(table)) return NO_COUNTS;
 
   // Prototype-less, because the keys are phrases the user typed. A line
   // literally called 'toString' would otherwise read as already shown, since

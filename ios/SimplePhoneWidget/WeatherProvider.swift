@@ -42,11 +42,24 @@ struct WeatherProvider: TimelineProvider {
         let cached = WeatherStore.load()
         let now = Date()
 
-        // `place` is nil until the user picks a city, and on a free personal
-        // team it is nil forever because this extension cannot see the app's
-        // config at all. Falling back to a real place means the widget shows a
-        // real forecast for an obviously-wrong city rather than an empty box —
-        // the same bargain `BundledDefaults` makes for the launcher.
+        // `place` answers ONE question -- "weather is on AND a city was
+        // picked" -- so a nil has two very different causes and they must not
+        // share a fallback. Falling back on both is what made the OFF switch
+        // show a São Paulo forecast: the user turns the widget off and it
+        // starts claiming a city they have never been to, and keeps fetching.
+        //
+        // Not picked yet, or a free personal team where this extension cannot
+        // read the app's config at all: fall back to a real place, because a
+        // real forecast for an obviously-wrong city beats an empty box -- the
+        // same bargain `BundledDefaults` makes for the launcher. An unreadable
+        // suite decodes `enabled` as true, so that case still lands here.
+        //
+        // Turned off on purpose: honour it. Render the empty state and issue
+        // no request.
+        guard config.weather.enabled else {
+            completion(timeline(config: config, snapshot: nil, now: now))
+            return
+        }
         let place = config.weather.place ?? WeatherSettings.fallbackPlace
 
         // The freshness gate. `ConfigStore.save` calls `reloadAllTimelines()`

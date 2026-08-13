@@ -41,7 +41,7 @@ export interface LauncherStore {
   /** Author is optional and trimmed away when blank, so `author` is never ''. */
   addQuote(text: string, author?: string): void;
   /** Replaces the line at `index`, keeping its position. Author cleared when blank. */
-  updateQuoteAt(index: number, text: string, author?: string): void;
+  updateQuote(previousText: string, text: string, author?: string): void;
   removeQuoteAt(index: number): void;
   /**
    * The app's one language setting: the UI strings, the bundled phrases, the
@@ -69,7 +69,7 @@ type Action =
   | { type: 'setQuotesEnabled'; enabled: boolean }
   | { type: 'setQuoteDuration'; duration: QuoteDuration }
   | { type: 'addQuote'; text: string; author?: string }
-  | { type: 'updateQuoteAt'; index: number; text: string; author?: string }
+  | { type: 'updateQuote'; previousText: string; text: string; author?: string }
   | { type: 'removeQuoteAt'; index: number }
   | { type: 'setLanguage'; language: AppLanguage }
   | { type: 'setWeatherEnabled'; enabled: boolean }
@@ -89,7 +89,17 @@ function makeQuote(text: string, author?: string): Quote | null {
   return trimmedAuthor === '' ? { text: trimmedText } : { text: trimmedText, author: trimmedAuthor };
 }
 
-function reduce(state: LauncherConfig, action: Action): LauncherConfig {
+/**
+ * Exported for tests ONLY. Every screen goes through the context.
+ *
+ * It is exported because it was the last code in this repo that writes user
+ * data with no test around it, and the gap was not theoretical: inverting the
+ * arguments of `switchLanguageItems(state.language, language, ...)` here leaves
+ * the whole suite green and the compiler silent, while on a phone it stacks the
+ * outgoing catalogue on top of the incoming one. The two functions it calls are
+ * the most carefully tested in the project and none of that reached the wiring.
+ */
+export function reduce(state: LauncherConfig, action: Action): LauncherConfig {
   switch (action.type) {
     case 'add':
       return { ...state, apps: [...state.apps, action.app] };
@@ -199,16 +209,29 @@ function reduce(state: LauncherConfig, action: Action): LauncherConfig {
       return { ...state, quotes: { ...state.quotes, items: [...state.quotes.items, quote] } };
     }
 
-    case 'updateQuoteAt': {
-      const { index } = action;
-      if (index < 0 || index >= state.quotes.items.length) return state;
+    case 'updateQuote': {
+      // Anchored to the phrase TEXT, never to a row index. The Phrases screen
+      // shows the edit form and the delete buttons at the same time, one tap
+      // apart, and an index captured when editing began points at a DIFFERENT
+      // phrase the moment any row above it is removed. Saving then overwrote a
+      // line the user never opened, and the collision guard below could not
+      // catch it because the incoming text was genuinely new. No undo.
+      //
+      // Text is the identity `quote_stats` already keys on, so this agrees with
+      // the counters rather than inventing a second notion of which line is
+      // which.
+      const index = state.quotes.items.findIndex((item) => item.text === action.previousText);
+      // The anchored line is gone, which means it was the one deleted. Dropping
+      // the edit is the only non-destructive answer: re-adding it would
+      // resurrect a phrase the user just removed.
+      if (index === -1) return state;
       const quote = makeQuote(action.text, action.author);
       if (quote === null) return state;
       const existing = state.quotes.items[index];
       if (existing !== undefined && existing.text === quote.text && existing.author === quote.author) {
         return state;
       }
-      // A rename to text that already exists elsewhere would collide on the
+      // A rename onto text that already exists elsewhere would collide on the
       // stats key, so it is refused rather than silently merging two rows.
       if (state.quotes.items.some((item, i) => i !== index && item.text === quote.text)) {
         return state;
@@ -303,8 +326,8 @@ export function LauncherStoreProvider({ children }: { children: ReactNode }) {
       addQuote(text, author) {
         dispatch({ type: 'addQuote', text, author });
       },
-      updateQuoteAt(index, text, author) {
-        dispatch({ type: 'updateQuoteAt', index, text, author });
+      updateQuote(previousText, text, author) {
+        dispatch({ type: 'updateQuote', previousText, text, author });
       },
       removeQuoteAt(index) {
         dispatch({ type: 'removeQuoteAt', index });

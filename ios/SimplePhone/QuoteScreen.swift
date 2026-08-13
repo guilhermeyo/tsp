@@ -155,7 +155,12 @@ enum QuoteScreen {
     // Anything else: the cover already on screen is KEPT exactly as it is, and
     // this call reads nothing but the config it already needed.
 
-    return config.holdSeconds
+    // Gated on `enabled` like every other branch above. Without it, turning
+    // Phrases OFF while a duration longer than instant was selected left the
+    // relay holding for that long on a blank themed rectangle -- the setting
+    // still costing its time after being switched off, which is the one thing
+    // an off switch must never do.
+    return config.enabled ? config.holdSeconds : 0
   }
 
   /// Torn down when the app comes back to the foreground, which is the moment
@@ -530,7 +535,10 @@ enum QuoteScreen {
   /// `addQuote` already refuses an exact duplicate, so the text is a unique,
   /// stable key with no id scheme and no migration for the 202 bundled lines.
   /// The consequence worth knowing: a future edit-a-phrase UI would zero that
-  /// line's history. Nothing edits today -- the screen adds and removes only.
+  /// line's history, and the Phrases screen DOES edit: `updateQuote` renames a
+  /// line in place, which orphans its count and the `current` restore key. The
+  /// orphan is pruned on the next write and the restore falls through to a
+  /// fresh roll, so the cost is one forgotten counter, not a broken screen.
   private struct Stats {
     var counts: [String: Int] = [:]
     var current: String?

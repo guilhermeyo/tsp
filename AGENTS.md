@@ -130,10 +130,20 @@ plutil -p ios/SimplePhoneWidget/SimplePhoneWidget.entitlements
 Not `simplephone`. The old native Swift app owns that one and may still be installed on the same
 device. Two apps registering the same scheme means iOS picks a winner arbitrarily.
 
-Widget rows link to `simplephonern://open?u=<encoded target>`. The scheme string lives in three
-places that must agree: `app.json` (`expo.scheme`, which IS still live — it feeds Expo Router),
-`ios/SimplePhoneWidget/DeepLink.swift`, and `src/domain/deepLink.ts`. The app target's registered
-scheme is in `ios/SimplePhone/Info.plist` under `CFBundleURLTypes`.
+Widget rows link to `simplephonern://open?u=<encoded target>`. The scheme string lives in FIVE
+places that must agree, and only one of them decides whether a tap opens anything:
+
+| Where | Role |
+| --- | --- |
+| `ios/SimplePhone/AppDelegate.swift`, `Relay.scheme` | **the running parser.** The relay handles the URL natively, before React Native |
+| `ios/SimplePhone/Info.plist`, `CFBundleURLTypes` | what the app registers with iOS |
+| `ios/SimplePhoneWidget/DeepLink.swift` | what the widget rows link to |
+| `app.json`, `expo.scheme` | feeds Expo Router |
+| `src/domain/deepLink.ts` | the JS mirror |
+
+`parseTarget` and `DeepLink.target(from:)` currently have no callers: the relay moved into
+`AppDelegate` and both parsers stayed behind. The tested parser is therefore NOT the running parser
+— a divergence to close before trusting `deepLink.test.ts` as coverage of the relay.
 
 A widget tap can never open a third-party app directly. Never put a third-party scheme in a widget
 `Link` or `widgetURL`. See the relay story in `README.md`.
@@ -165,7 +175,6 @@ They look like bugs. They are faithful ports of deliberate behavior:
 - `placeholder` uses `LauncherConfig.default` while `getSnapshot` uses `ConfigStore.load()`.
 - `Timeline(policy: .never)` with no time-based refresh.
 - Two rendering paths in `WidgetViews.swift` (`Link` does not work in `systemSmall`).
-- Deep-link failure is a silent no-op with a `TODO`. No alert, no toast.
 - Delete has no confirmation, on either of the two delete paths.
 - The Appearance screen has no Done button. Every edit commits live; swipe-down is the exit.
 - "Choose from catalog" prefills the form only. It never adds or saves anything.

@@ -44,7 +44,7 @@ export default function PhrasesScreen() {
   /** Optional. Blank means the line has no attribution, which is most of them. */
   const [author, setAuthor] = useState('');
   /** null while adding, an index while editing an existing line in place. */
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState<string | null>(null);
 
   // Seeded synchronously, the same trick the store uses with useReducer: the
   // native read is a JSI Function, so the first render already has the real
@@ -70,18 +70,18 @@ export default function PhrasesScreen() {
   // Editing keeps its own row out of the duplicate check: re-saving a line
   // without changing its text must not be refused as a duplicate of itself.
   const collides = quotes.items.some(
-    (item, i) => i !== editingIndex && item.text === trimmed
+    (item) => item.text !== editingText && item.text === trimmed
   );
   const canAdd = trimmed !== '' && !collides;
 
   function add(): void {
     if (!canAdd) return;
-    if (editingIndex === null) {
+    if (editingText === null) {
       store.addQuote(trimmed, trimmedAuthor);
     } else {
-      store.updateQuoteAt(editingIndex, trimmed, trimmedAuthor);
+      store.updateQuote(editingText, trimmed, trimmedAuthor);
     }
-    setEditingIndex(null);
+    setEditingText(null);
     setAuthor('');
     setDraft('');
   }
@@ -163,7 +163,7 @@ export default function PhrasesScreen() {
               <Text
                 style={[styles.action, { color: canAdd ? colors.primary : secondaryLabel }]}
               >
-                {editingIndex === null ? s.commonAdd : s.commonSave}
+                {editingText === null ? s.commonAdd : s.commonSave}
               </Text>
             </Pressable>
           </View>
@@ -186,10 +186,10 @@ export default function PhrasesScreen() {
               returnKeyType="done"
               onSubmitEditing={add}
             />
-            {editingIndex !== null && (
+            {editingText !== null && (
               <Pressable
                 onPress={() => {
-                  setEditingIndex(null);
+                  setEditingText(null);
                   setDraft('');
                   setAuthor('');
                 }}
@@ -234,7 +234,7 @@ export default function PhrasesScreen() {
                   <Pressable
                     style={styles.quoteBlock}
                     onPress={() => {
-                      setEditingIndex(index);
+                      setEditingText(item.text);
                       setDraft(item.text);
                       setAuthor(item.author ?? '');
                     }}
@@ -274,7 +274,17 @@ export default function PhrasesScreen() {
                     {count === undefined ? '' : String(count)}
                   </Text>
                   <Pressable
-                    onPress={() => store.removeQuoteAt(index)}
+                    onPress={() => {
+                      // Leaving edit mode pointed at a line that no longer
+                      // exists would strand the form: the save would find no
+                      // anchor and silently do nothing.
+                      if (editingText === item.text) {
+                        setEditingText(null);
+                        setDraft('');
+                        setAuthor('');
+                      }
+                      store.removeQuoteAt(index);
+                    }}
                     hitSlop={8}
                     accessibilityLabel={s.a11yRemovePhrase(item.text)}
                   >
