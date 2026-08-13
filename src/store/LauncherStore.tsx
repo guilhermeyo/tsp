@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { consumeQuotesUpgrade, loadConfig, saveConfig } from './configStore';
 
 import { BUNDLED_QUOTES } from '@/domain/quotes';
-import type { QuoteLanguage } from '@/domain/quotes';
+import type { QuoteDuration, QuoteLanguage } from '@/domain/quotes';
 import type { LauncherApp, LauncherConfig, Theme } from '@/domain/types';
 
 /**
@@ -29,6 +29,7 @@ export interface LauncherStore {
   setQuotesEnabled(enabled: boolean): void;
   /** Reseeds from the new language's bundle, KEEPING anything the user wrote. */
   setQuoteLanguage(language: QuoteLanguage): void;
+  setQuoteDuration(duration: QuoteDuration): void;
   /** Trims, ignores empty, ignores an exact duplicate, appends to the END. */
   addQuote(text: string): void;
   removeQuoteAt(index: number): void;
@@ -43,6 +44,7 @@ type Action =
   | { type: 'updateTheme'; patch: Partial<Theme> }
   | { type: 'setQuotesEnabled'; enabled: boolean }
   | { type: 'setQuoteLanguage'; language: QuoteLanguage }
+  | { type: 'setQuoteDuration'; duration: QuoteDuration }
   | { type: 'addQuote'; text: string }
   | { type: 'removeQuoteAt'; index: number };
 
@@ -115,6 +117,10 @@ function reduce(state: LauncherConfig, action: Action): LauncherConfig {
         },
       };
     }
+
+    case 'setQuoteDuration':
+      if (state.quotes.duration === action.duration) return state;
+      return { ...state, quotes: { ...state.quotes, duration: action.duration } };
 
     case 'addQuote': {
       const text = action.text.trim();
@@ -203,6 +209,9 @@ export function LauncherStoreProvider({ children }: { children: ReactNode }) {
       },
       setQuoteLanguage(language) {
         dispatch({ type: 'setQuoteLanguage', language });
+      },
+      setQuoteDuration(duration) {
+        dispatch({ type: 'setQuoteDuration', duration });
       },
       addQuote(text) {
         dispatch({ type: 'addQuote', text });

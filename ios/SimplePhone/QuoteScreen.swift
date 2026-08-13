@@ -34,9 +34,9 @@ enum QuoteScreen {
   /// makes dismissal a no-op until the handoff has actually happened.
   private static var isHolding = false
 
-  /// Returns the phrase shown, or nil when there is nothing to show and the
-  /// caller should just open the target immediately.
-  static func present(in appWindow: UIWindow?) -> String? {
+  /// Returns how long to hold before opening the target, or nil when there is
+  /// nothing to show and the caller should open immediately.
+  static func present(in appWindow: UIWindow?) -> TimeInterval? {
     guard let config = loadConfig(),
           config.enabled,
           let quote = config.items.randomElement()
@@ -75,9 +75,9 @@ enum QuoteScreen {
     window = overlay
     isHolding = true
 
-    // Held, not animated in. A fade would eat a third of the time the phrase
+    // Held, not animated in. A fade would eat a slice of the time the phrase
     // has, and the point is to be readable, not to be a transition.
-    return quote
+    return config.holdSeconds
   }
 
   /// Torn down when the app comes back to the foreground, which is the moment
@@ -112,11 +112,15 @@ enum QuoteScreen {
     return UIFont(descriptor: descriptor, size: size)
   }
 
-  private struct Config {
+  struct Config {
     let enabled: Bool
     let items: [String]
     let isDark: Bool
     let font: String
+    /// Resolved by the app from its named durations, so this side never carries
+    /// the label table. Clamped on read: a corrupt payload must not be able to
+    /// freeze the launcher on a phrase.
+    let holdSeconds: TimeInterval
   }
 
   /// Hand-rolled rather than Codable structs: this needs four fields out of a
@@ -135,10 +139,12 @@ enum QuoteScreen {
     else { return nil }
 
     let theme = root["theme"] as? [String: Any]
+    let ms = quotes["durationMs"] as? Double ?? 1800
     return Config(
       enabled: enabled,
       items: items,
       isDark: theme?["isDark"] as? Bool ?? true,
-      font: theme?["font"] as? String ?? "monospaced")
+      font: theme?["font"] as? String ?? "monospaced",
+      holdSeconds: min(max(ms / 1000, 0.4), 8))
   }
 }

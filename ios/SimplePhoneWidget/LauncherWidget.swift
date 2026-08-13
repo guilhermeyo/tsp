@@ -6,7 +6,7 @@ struct LauncherWidget: Widget {
         StaticConfiguration(kind: "SimplePhoneLauncher", provider: LauncherProvider()) { entry in
             LauncherWidgetView(entry: entry)
         }
-        .configurationDisplayName("Simple Phone RN")
+        .configurationDisplayName("TSP - The Simple Phone")
         .description("Your apps as a calm text list.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()

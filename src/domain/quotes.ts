@@ -18,6 +18,39 @@
 
 export type QuoteLanguage = 'pt-BR' | 'en';
 
+/**
+ * How long the phrase is held before the target app is asked to open.
+ *
+ * A setting rather than a constant because the right value is a matter of
+ * taste and of what the phrase is FOR. Treated as a pause it wants to be long;
+ * treated as a launcher it wants to be gone. Only the person tapping it forty
+ * times a day can say.
+ *
+ * The felt pause is longer than the number: iOS spends its own moment on the
+ * app-to-app transition after this elapses.
+ */
+export type QuoteDuration = 'quick' | 'short' | 'medium' | 'long';
+
+export const QUOTE_DURATIONS: readonly QuoteDuration[] = ['quick', 'short', 'medium', 'long'];
+
+export const QUOTE_DURATION_MS: Record<QuoteDuration, number> = {
+  quick: 1000,
+  short: 1800,
+  medium: 2600,
+  long: 4000,
+};
+
+export const QUOTE_DURATION_LABEL: Record<QuoteDuration, string> = {
+  quick: 'Quick',
+  short: 'Short',
+  medium: 'Medium',
+  long: 'Long',
+};
+
+export function isQuoteDuration(value: unknown): value is QuoteDuration {
+  return value === 'quick' || value === 'short' || value === 'medium' || value === 'long';
+}
+
 export const QUOTE_LANGUAGES: readonly QuoteLanguage[] = ['pt-BR', 'en'];
 
 export function isQuoteLanguage(value: unknown): value is QuoteLanguage {

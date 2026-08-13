@@ -37,13 +37,6 @@ private enum Relay {
     return target
   }
 
-  /// How long the phrase is held before the target app is asked to open.
-  ///
-  /// Long enough to read five words, short enough not to feel like a toll. The
-  /// handoff is not free either: iOS spends a moment of its own on the
-  /// transition, so the felt pause is longer than this number.
-  private static let quoteDuration: TimeInterval = 1.4
-
   /// Returns true when `url` was ours, whether or not the target opened.
   @discardableResult
   static func handle(_ url: URL, window: UIWindow?) -> Bool {
@@ -53,16 +46,15 @@ private enum Relay {
     // `didFinishLaunchingWithOptions`, where opening synchronously is too early
     // for LaunchServices.
     DispatchQueue.main.async {
-      guard let quote = QuoteScreen.present(in: window) else {
-        open(target, window: window)
-        return
-      }
       // The phrase is on screen NOW, painted by UIKit over the launch image,
       // with React Native still booting behind it. Doing this in JavaScript
       // would have meant waiting out the whole cold start before the user saw
-      // a single word.
-      _ = quote
-      DispatchQueue.main.asyncAfter(deadline: .now() + quoteDuration) {
+      // a single word. The hold comes from the user's own setting.
+      guard let hold = QuoteScreen.present(in: window) else {
+        open(target, window: window)
+        return
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
         open(target, window: window)
       }
     }

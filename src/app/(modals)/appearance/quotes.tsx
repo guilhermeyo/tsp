@@ -10,7 +10,13 @@ import {
   View,
 } from 'react-native';
 
-import { QUOTE_LANGUAGES, QUOTE_LANGUAGE_LABEL } from '@/domain/quotes';
+import {
+  QUOTE_DURATIONS,
+  QUOTE_DURATION_LABEL,
+  QUOTE_DURATION_MS,
+  QUOTE_LANGUAGES,
+  QUOTE_LANGUAGE_LABEL,
+} from '@/domain/quotes';
 import { useLauncherStore } from '@/store/LauncherStore';
 import { fontFamilyFor } from '@/theme/fonts';
 
@@ -71,6 +77,36 @@ export default function QuotesScreen() {
                 {language === quotes.language && (
                   <SymbolView name="checkmark" size={15} weight="semibold" tintColor={colors.primary} />
                 )}
+              </Pressable>
+            </Fragment>
+          ))}
+        </View>
+
+        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>How long it stays</Text>
+
+        <View style={[styles.card, { backgroundColor: colors.card }]}>
+          {QUOTE_DURATIONS.map((duration, index) => (
+            <Fragment key={duration}>
+              {index > 0 && (
+                <View style={[styles.separator, { backgroundColor: colors.border }]} />
+              )}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: duration === quotes.duration }}
+                style={styles.row}
+                onPress={() => store.setQuoteDuration(duration)}
+              >
+                <Text style={[styles.rowLabel, { color: colors.text }]}>
+                  {QUOTE_DURATION_LABEL[duration]}
+                </Text>
+                <View style={styles.disclosure}>
+                  <Text style={[styles.value, { color: secondaryLabel }]}>
+                    {`${(QUOTE_DURATION_MS[duration] / 1000).toFixed(1)}s`}
+                  </Text>
+                  {duration === quotes.duration && (
+                    <SymbolView name="checkmark" size={15} weight="semibold" tintColor={colors.primary} />
+                  )}
+                </View>
               </Pressable>
             </Fragment>
           ))}
@@ -160,6 +196,14 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   rowLabel: {
+    fontSize: 17,
+  },
+  disclosure: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  value: {
     fontSize: 17,
   },
   quote: {

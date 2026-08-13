@@ -3,7 +3,7 @@ import * as Crypto from 'expo-crypto';
 import { LauncherNative } from '../../modules/launcher-native';
 
 import { BUNDLED_DEFAULTS } from '@/domain/bundledDefaults';
-import { BUNDLED_QUOTES, isQuoteLanguage } from '@/domain/quotes';
+import { BUNDLED_QUOTES, QUOTE_DURATION_MS, isQuoteDuration, isQuoteLanguage } from '@/domain/quotes';
 import {
   DEFAULT_QUOTES,
   DEFAULT_THEME,
@@ -79,6 +79,7 @@ function decodeQuotes(value: unknown): Quotes {
   return {
     enabled: typeof value.enabled === 'boolean' ? value.enabled : DEFAULT_QUOTES.enabled,
     language,
+    duration: isQuoteDuration(value.duration) ? value.duration : DEFAULT_QUOTES.duration,
     items: items.length > 0 ? items : ((didSynthesizeQuotes = true), BUNDLED_QUOTES[language].slice()),
   };
 }
@@ -174,6 +175,11 @@ function serialize(config: LauncherConfig): string {
     quotes: {
       enabled: config.quotes.enabled,
       language: config.quotes.language,
+      duration: config.quotes.duration,
+      // Resolved here so the native side never needs the label table. It reads
+      // a number and sleeps; a Swift copy of these four values would be one
+      // more pair to keep in sync for nothing.
+      durationMs: QUOTE_DURATION_MS[config.quotes.duration],
       items: config.quotes.items,
     },
     theme: {

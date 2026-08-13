@@ -8,7 +8,7 @@
  * default and the widget silently drifts from the app.
  */
 
-import type { QuoteLanguage } from './quotes';
+import type { QuoteDuration, QuoteLanguage } from './quotes';
 
 /** Mirrors `FontChoice` in ios/SimplePhoneWidget/Theme.swift. */
 export type FontChoice = 'monospaced' | 'system' | 'rounded' | 'serif';
@@ -57,6 +57,7 @@ export interface Quotes {
   /** Off means the relay opens the target immediately, as it did before. */
   enabled: boolean;
   language: QuoteLanguage;
+  duration: QuoteDuration;
   items: string[];
 }
 
@@ -84,6 +85,7 @@ export const DEFAULT_THEME: Theme = {
 export const DEFAULT_QUOTES: Quotes = {
   enabled: true,
   language: 'pt-BR',
+  duration: 'short',
   items: [],
 };
 
