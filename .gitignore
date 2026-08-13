@@ -38,9 +38,12 @@ yarn-error.*
 
 example
 
-# generated native folders
-/ios
+# android/ is still generated — this project is iOS-only for now.
 /android
+
+# NOTE: ios/ is deliberately NOT ignored. This is a bare project: the Xcode
+# project is source, hand-edited, and committed. Running `npx expo prebuild`
+# would overwrite it. See README.md.
 
 # port reference (copy of the old Swift catalog, deleted once ported)
 .reference/

@@ -41,60 +41,85 @@ TypeScript is not running inside the extension either. It is a description that 
 
 There is no documented escape hatch for dropping in your own Swift when the abstraction runs out.
 That makes `expo-widgets` the right tool if the goal is to ship a widget, and the wrong tool if the
-goal is to understand WidgetKit. This project's goal is the second one, so we use
-`@bacons/apple-targets` for target generation and write the Swift by hand.
-
-If the hand-written path ever collapses (see the risks in `docs/native-notes.md`), `expo-widgets` is
-the documented fallback. The cost of falling back is the Swift pedagogy, not the feature.
+goal is to understand WidgetKit. This project's goal is the second one, so the widget is hand-written
+Swift in a target this repo owns.
 
 ---
 
-## The prebuild story
+## This is a bare project
 
-**`ios/` is generated output. It is gitignored. Never hand-edit anything inside it.**
+**`ios/` is source. It is committed. You edit it, in Xcode, by hand.**
 
-This is not new discipline for this project. The previous native version generated
-`SimplePhone.xcodeproj` with XcodeGen from a committed `project.yml`, and gitignored the result.
-Same rule, different generator. What changed is where the declarative spec lives:
+That is a deliberate choice and it is the opposite of the Expo default. Worth understanding, because
+almost every Expo tutorial you will find assumes the other model.
 
-| Before (XcodeGen)      | Now (Expo prebuild)                    |
-| ---------------------- | -------------------------------------- |
-| `project.yml`          | `app.json`                             |
-| `SimplePhoneWidget/`   | `targets/widget/expo-target.config.js` |
-| `xcodegen generate`    | `npx expo prebuild -p ios --clean`     |
-| `SimplePhone.xcodeproj`| `ios/` (all of it)                     |
+### Bare vs CNG, in one table
 
-### The committed native surface
+Expo has two ways to own the native project. Modern docs call them "with CNG" and "without CNG";
+older docs call them "managed" and "bare".
 
-```
-targets/widget/          Swift source for the WidgetKit extension. COMMITTED.
-modules/launcher-native/ Swift source for the local Expo module. COMMITTED.
-app.json                 The app target's spec: bundle id, scheme, entitlements, plugins.
-ios/                     Everything above, assembled into an Xcode project. DISPOSABLE.
-```
+|                        | CNG (Expo's default)                  | Bare (this project)             |
+| ---------------------- | ------------------------------------- | ------------------------------- |
+| `ios/`                 | generated, gitignored                 | committed, hand-edited          |
+| Source of truth        | `app.json` + config plugins           | the Xcode project itself        |
+| Add a native target    | a config plugin writes the pbxproj    | you add it in Xcode             |
+| Icon, splash, Info.plist | `app.json`                          | Xcode, by hand                  |
+| `npx expo prebuild`    | the normal workflow                   | **forbidden — it would wipe `ios/`** |
+| Upgrading Expo / RN    | regenerate and move on                | manual native merge             |
 
-`targets/` and `modules/` live *outside* `ios/`, and that placement is the entire trick. Prebuild
-reads them and copies them into the generated project. Delete `ios/`, run prebuild again, and they
-are still there. If the Swift lived in `ios/`, one command would erase it.
+CNG buys cheap upgrades at the cost of never really seeing the native project. Bare costs you the
+upgrade path and hands you the thing itself.
 
-### The warning
+### Why bare here
 
-As of SDK 57, **`npx expo prebuild` clears and regenerates the native directories by default**
-(`@expo/cli` PR #47209). It used to try to merge into an existing `ios/`. It no longer does. Any
-change you made by hand in Xcode is one absent-minded command away from deletion, with no prompt.
+Two reasons, and the second is the load-bearing one.
 
-Run it with `--clean` anyway. Incremental prebuild has open upstream bugs specifically around
-updating an *existing* Apple target (`@bacons/apple-targets` issues #201, #206, #199): the target
-gets duplicated, or its build phases get half-rewritten, and the failure shows up as a link error
-three steps later. A full regeneration takes about a minute and is always correct.
+1. **Learning.** The point of this rebuild was to understand the native side. Under CNG the Xcode
+   project is a black box that a plugin regenerates; you learn the plugin's config format, not
+   Xcode. Here you can open `SimplePhone.xcodeproj`, see two targets, see the embed phase that puts
+   the `.appex` inside the app, and change any of it.
+2. **One less fragile dependency.** Getting a hand-written Swift extension into a CNG project needs
+   `@bacons/apple-targets`. That package generated the target in this repo originally and it worked,
+   but it is a single-maintainer project whose pbxproj writer (`@bacons/xcode`) is still
+   `1.0.0-alpha.32`, whose docs site returns HTTP 410, and whose SDK 57 support was unverified until
+   this project tested it. Under bare it is not a dependency at all — it did its job once and was
+   removed. The generated target it produced is now just part of the committed project.
+
+### The rule
 
 ```bash
-npx expo prebuild -p ios --clean
-cd ios && pod install && cd ..
+npx expo prebuild        # NEVER. It clears and regenerates ios/ by default as of
+                         # SDK 57 (@expo/cli PR #47209), with no prompt.
 ```
 
-If you need to change something in the Xcode project, the change belongs in `app.json`, in
-`targets/widget/expo-target.config.js`, or in a config plugin. Never in `ios/`.
+Everything else is normal:
+
+```bash
+cd ios && pod install    # fine, and required after changing JS dependencies
+```
+
+`pod install` only rewrites `Pods/` and the workspace. It does not touch `SimplePhone.xcodeproj`.
+
+`app.json` still exists and still configures the JavaScript side (scheme, name, Expo Router,
+`expo-build-properties`). What it no longer does is drive the native project. If you change
+`ios.bundleIdentifier` or `ios.entitlements` there, **nothing happens** — those values were baked
+into the Xcode project when it was generated, and Xcode is now the only place they live.
+
+### Layout
+
+```
+ios/
+  SimplePhone.xcodeproj/     the project. Two targets. COMMITTED.
+  SimplePhone/               the app target: AppDelegate, Info.plist, entitlements.
+  SimplePhoneWidget/         the widget extension: Swift, Info.plist, entitlements.
+  Podfile / Podfile.lock     COMMITTED. Pods/ is not.
+modules/launcher-native/     local Expo module (Swift). Autolinked by CocoaPods.
+src/                         the React Native app.
+```
+
+`ios/SimplePhoneWidget/` is a `PBXFileSystemSynchronizedRootGroup` — an Xcode 16+ synchronized
+folder. Any `.swift` file you drop in there joins the target automatically, with no pbxproj edit.
+`Info.plist` and the entitlements are excluded from compilation by a membership exception.
 
 ---
 
@@ -132,12 +157,12 @@ The old native Swift app owns `simplephone` and may still be installed on the sa
 installed apps register the same URL scheme, iOS picks a winner arbitrarily and does not tell you
 which. So this port registers `simplephonern` and the two coexist cleanly. If you ever delete the
 old app for good and want the shorter scheme back, changing it means changing `app.json`,
-`targets/widget/DeepLink.swift` and `src/domain/deepLink.ts` together, and every already-placed
+`ios/SimplePhoneWidget/DeepLink.swift` and `src/domain/deepLink.ts` together, and every already-placed
 widget keeps pointing at the old scheme until its timeline is reloaded.
 
 ### The SwiftUI asymmetry: `Link` vs `widgetURL`
 
-`targets/widget/WidgetViews.swift` has two rendering paths that look like they could be one. They
+`ios/SimplePhoneWidget/WidgetViews.swift` has two rendering paths that look like they could be one. They
 cannot:
 
 - **`systemMedium` and `systemLarge`** wrap each row in a SwiftUI `Link`, so each row opens its own
@@ -186,15 +211,16 @@ app's data keep it.
 The group id appears literally in two files and must match exactly. A stray space fails signing,
 usually with a message that does not mention the group at all:
 
-- `app.json` under `expo.ios.entitlements`
-- `targets/widget/expo-target.config.js` under `entitlements`
+- `ios/SimplePhone/SimplePhone.entitlements`
+- `ios/SimplePhoneWidget/SimplePhoneWidget.entitlements`
 
-It is written out literally in both rather than derived from one source, so that `grep` finds every
-occurrence. Verify after any prebuild:
+Both are plain plists in the Xcode project. (`app.json` also lists the group under
+`expo.ios.entitlements`, but that is now inert documentation: nothing reads it, because this project
+does not run prebuild.) Verify the two that matter:
 
 ```bash
 plutil -p ios/SimplePhone/SimplePhone.entitlements
-plutil -p ios/.targets/SimplePhoneWidget/generated.entitlements
+plutil -p ios/SimplePhoneWidget/SimplePhoneWidget.entitlements
 ```
 
 Both must print the same single-element array.
@@ -222,7 +248,7 @@ Status, stated precisely:
 
 ### The fallback, and why it must stay
 
-`targets/widget/ConfigStore.swift` reads:
+`ios/SimplePhoneWidget/ConfigStore.swift` reads:
 
 ```swift
 UserDefaults(suiteName: AppGroup.id) ?? .standard
@@ -337,9 +363,11 @@ defaults. Do not make it possible.
 ```bash
 npm install
 npx tsc --noEmit                      # strict; must be clean
-npx expo prebuild -p ios --clean      # regenerates ios/ from app.json + targets/
-cd ios && pod install && cd ..
+cd ios && pod install && cd ..        # after any JS dependency change
 npx expo run:ios                      # simulator
+
+# NEVER run `npx expo prebuild` — ios/ is committed source, and prebuild
+# clears and regenerates it by default. See "This is a bare project".
 ```
 
 For a device build:
@@ -384,7 +412,7 @@ xcrun simctl openurl booted 'simplephonern://open?u=App-Prefs%3A%2F%2F'
 ### Widget-specific testing
 
 Widgets do not hot-reload and do not appear on the simulator home screen until the extension has
-been built and embedded at least once. After changing Swift under `targets/widget/`, rebuild the
+been built and embedded at least once. After changing Swift under `ios/SimplePhoneWidget/`, rebuild the
 app, then remove and re-add the widget if the gallery still shows a stale preview. If the widget
 renders but never updates, the suspect is the App Group, not the timeline: see the fallback section
 above.
@@ -400,27 +428,34 @@ Everything here was confirmed on this machine, not inferred from documentation.
 | Expo SDK                   | 57.0.12                                             |
 | React Native               | 0.86.2                                              |
 | React                      | 19.2.3                                              |
-| `@bacons/apple-targets`    | 5.0.0 (pinned exact, no caret)                       |
+| Native workflow            | bare — `ios/` committed, no prebuild                |
 | TypeScript                 | 6.0.3                                               |
 | Xcode                      | 26.6 (17F113)                                       |
 | CocoaPods                  | 1.17.0, via Homebrew at `/opt/homebrew/bin/pod`     |
 | Node / npm                 | 26.0.0 / 11.12.1                                    |
 
-**A widget target was confirmed to build, embed and launch on this exact stack.**
-`@bacons/apple-targets` issue #194 ("Adding a Widget Extension breaks React Native 0.83 framework
-embedding", the `dyld: Library not loaded: @rpath/ReactNativeDependencies.framework` crash at
-launch) **did not reproduce**. That issue was filed against RN 0.83 and framework embedding has
-moved twice since. This was the single risk that could have killed the whole approach, and it is
-retired.
+**A widget extension was confirmed to build, embed and launch on this exact stack**, first under CNG
+and then again after the conversion to bare. `@bacons/apple-targets` issue #194 ("Adding a Widget
+Extension breaks React Native 0.83 framework embedding", the
+`dyld: Library not loaded: @rpath/ReactNativeDependencies.framework` crash at launch) **did not
+reproduce** on RN 0.86. That was the single risk that could have killed the approach, and it is
+retired — and now moot, since the package is gone.
+
+How this project got here, because the history explains the layout:
+
+1. Scaffolded on CNG with `@bacons/apple-targets` 5.0.0, which generated the widget target.
+2. Verified: tsc clean, prebuild clean, app and widget build, embed and launch.
+3. Converted to bare: `ios/` committed, the widget moved from `ios/SimplePhoneWidget/` into
+   `ios/SimplePhoneWidget/`, four pbxproj paths rewritten, the package uninstalled, `pod install`
+   re-run.
+4. Re-verified: same build, same launch, same rendering, with no Expo plugin involved.
 
 Two things that are still true and worth knowing:
 
-- CocoaPods is still required. SDK 57 has not moved to SwiftPM, and prebuild still generates a
-  Podfile. CocoaPods goes read-only in December 2026, which is not a blocker today but is a reason
-  not to architect around Podfile customizations.
-- `@bacons/apple-targets` 5.0.0 nests its own SDK-55-era `@expo/prebuild-config` inside an SDK 57
-  project, and its peer range is `expo: >=52`, so npm will never warn you about a mismatch. Pin the
-  version exactly. It works today; a floating minor is not something to gamble a build on.
+- CocoaPods is still required. SDK 57 has not moved to SwiftPM. CocoaPods goes read-only in December
+  2026, which is not a blocker today but is a reason not to architect around Podfile customizations.
+- Being bare means Expo SDK upgrades are a manual native merge. Budget real time for them, and read
+  Expo's upgrade notes for the native diffs rather than assuming JS-only changes.
 
 ---
 
@@ -466,4 +501,4 @@ npx skills add EvanBacon/expo-apple-targets/tree/main/skills/apple-targets
 ```
 
 That pulls in 45+ per-extension reference documents, including `widget.md`. It is the best WidgetKit
-material in the Expo ecosystem, and it is worth reading before touching `targets/`.
+material in the Expo ecosystem, and it is worth reading before touching `ios/SimplePhoneWidget/`. Ignore its config-plugin instructions: this project no longer uses that package.

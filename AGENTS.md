@@ -15,49 +15,54 @@ are stale.
 
 **Read the versioned docs: https://docs.expo.dev/versions/v57.0.0/**
 
-Specifically stale advice to ignore: "bare vs managed workflow" (replaced by CNG, see
-`docs/native-notes.md` part 3), the old bridge module API with `RCT_EXPORT_METHOD` (replaced by the
-Expo Modules API), and anything about `expo eject` (that command no longer exists).
+Specifically stale advice to ignore: the old bridge module API with `RCT_EXPORT_METHOD` (replaced by
+the Expo Modules API), and anything about `expo eject` (that command no longer exists).
+
+Note that most Expo docs assume CNG, where `ios/` is generated. **This project is bare** — `ios/` is
+committed source. See `docs/native-notes.md` part 3 and the README section "This is a bare project".
 
 ---
 
 ## Repo shape
 
 ```
-app.json                  the app target's spec. Replaced the old project.yml.
-targets/widget/           Swift for the WidgetKit extension.        COMMITTED. SOURCE.
+app.json                  JS-side config only: scheme, name, router, build properties.
+ios/                      the Xcode project. TWO TARGETS. COMMITTED. SOURCE.
+  SimplePhone/            the app target.
+  SimplePhoneWidget/      Swift for the WidgetKit extension.
 modules/launcher-native/  Swift for the local Expo module.          COMMITTED. SOURCE.
 src/                      the React Native app. TypeScript, strict.
 docs/                     teaching notes.
-ios/                      generated Xcode project.                  GITIGNORED. OUTPUT.
 ```
 
-**`targets/` and `modules/` are the committed native surface. `ios/` is disposable.**
+**`ios/` is source here, not output.** That is the opposite of a default Expo project.
 
-### Never hand-edit the generated project
-
-This rule predates the Expo port. The old setup generated `SimplePhone.xcodeproj` with XcodeGen from
-a committed `project.yml` and gitignored the result. Same rule, new generator.
-
-Any change you make inside `ios/`, whether by editing files or by clicking around in Xcode, is
-destroyed by the next prebuild, with no prompt and no warning. As of SDK 57, `npx expo prebuild`
-clears and regenerates the native directories **by default**.
-
-Changes belong in one of exactly three places:
-
-| What you want to change              | Where it goes                          |
-| ------------------------------------ | -------------------------------------- |
-| Bundle id, scheme, entitlements, plist | `app.json`                           |
-| The widget extension target          | `targets/widget/expo-target.config.js` |
-| Anything else in the Xcode project   | a config plugin                        |
-
-Always regenerate with `--clean`. Incremental prebuild has open upstream bugs when updating an
-existing Apple target:
+### Never run `expo prebuild`
 
 ```bash
-npx expo prebuild -p ios --clean
-cd ios && pod install && cd ..
+npx expo prebuild   # NEVER. Clears and regenerates ios/ by default as of SDK 57.
 ```
+
+It would delete the committed Xcode project, both targets, and every hand edit, with no prompt. This
+project was converted to bare deliberately; prebuild is the one command that undoes it.
+
+`pod install` is fine and expected after any JS dependency change. It rewrites `Pods/` and the
+workspace, not `SimplePhone.xcodeproj`.
+
+Changes belong in exactly two places now:
+
+| What you want to change                | Where it goes                        |
+| -------------------------------------- | ------------------------------------ |
+| Bundle id, entitlements, plist, targets | Xcode, in `ios/`                    |
+| Scheme, router, JS-side Expo config     | `app.json`                          |
+
+`app.json` still lists `ios.bundleIdentifier` and `ios.entitlements`. **Those are inert.** They were
+consumed once when the project was generated. Editing them now changes nothing.
+
+### Adding Swift to the widget
+
+`ios/SimplePhoneWidget/` is a `PBXFileSystemSynchronizedRootGroup` (Xcode 16+). Drop a `.swift` file
+in and it joins the target automatically, no pbxproj edit required.
 
 ---
 
@@ -74,12 +79,12 @@ Object bridging coerces the JS boolean `true` to `1`. Swift's
 for absent or null keys). The throw escapes `Theme`'s resilient init, `ConfigStore.load()`'s `try?`
 swallows it, and the entire `LauncherConfig` resets to `.default`. Every app the user added is gone.
 
-This is why `@bacons/apple-targets`' bundled `ExtensionStorage` is deliberately unused. Full chain
-in `README.md`.
+This is why the local module in `modules/launcher-native/` takes a `String` and never an object, and
+why no off-the-shelf key-value bridge is used. Full chain in `README.md`.
 
 ### 2. Never rename the widget `kind` string
 
-`"SimplePhoneLauncher"` in `targets/widget/LauncherWidget.swift`. WidgetKit persists it for widgets
+`"SimplePhoneLauncher"` in `ios/SimplePhoneWidget/LauncherWidget.swift`. WidgetKit persists it for widgets
 already placed on home screens. Renaming it blanks every one of them, on every device, permanently.
 There is no migration API.
 
@@ -110,13 +115,12 @@ Point sizes are two separate tables. Do not mix them:
 - Widget and in-app preview: **20 / 28 / 36 / 44**
 - In-app list rows: **17 / 22 / 28 / 34**
 
-The App Group id appears literally in `app.json` and in
-`targets/widget/expo-target.config.js`. A stray space fails signing with a message that does not
-mention the group. Verify after prebuild:
+The App Group id lives in two entitlements plists that must match byte for byte. A stray space fails
+signing with a message that does not mention the group:
 
 ```bash
 plutil -p ios/SimplePhone/SimplePhone.entitlements
-plutil -p ios/.targets/SimplePhoneWidget/generated.entitlements
+plutil -p ios/SimplePhoneWidget/SimplePhoneWidget.entitlements
 ```
 
 ---
@@ -127,7 +131,9 @@ Not `simplephone`. The old native Swift app owns that one and may still be insta
 device. Two apps registering the same scheme means iOS picks a winner arbitrarily.
 
 Widget rows link to `simplephonern://open?u=<encoded target>`. The scheme string lives in three
-places that must agree: `app.json`, `targets/widget/DeepLink.swift`, `src/domain/deepLink.ts`.
+places that must agree: `app.json` (`expo.scheme`, which IS still live — it feeds Expo Router),
+`ios/SimplePhoneWidget/DeepLink.swift`, and `src/domain/deepLink.ts`. The app target's registered
+scheme is in `ios/SimplePhone/Info.plist` under `CFBundleURLTypes`.
 
 A widget tap can never open a third-party app directly. Never put a third-party scheme in a widget
 `Link` or `widgetURL`. See the relay story in `README.md`.
@@ -169,8 +175,7 @@ They look like bugs. They are faithful ports of deliberate behavior:
 ```bash
 npm install
 npx tsc --noEmit
-npx expo prebuild -p ios --clean
-cd ios && pod install && cd ..
+cd ios && pod install && cd ..    # only after a JS dependency change
 npx expo run:ios
 ```
 
@@ -202,4 +207,7 @@ This repo is a child of the **lifestyle** meta-repo and follows its conventions.
 - **No emojis. No AI mentions. No `Co-Authored-By` trailer.**
 - **Never commit `.env`** or anything holding a secret.
 - Do not commit or push without explicit approval. "Continue" is not approval to publish.
-- `ios/`, `android/` and `node_modules/` are gitignored and must stay that way.
+- `node_modules/`, `android/`, `ios/Pods/` and `ios/build/` are gitignored and must stay that way.
+- **`ios/` is committed.** Do not add it to `.gitignore`.
+- The global `~/.gitignore` ignores `src/` (a makepkg build dir on Arch). This repo un-ignores it
+  with `!src/`. Do not remove that line: without it the entire app silently vanishes from commits.

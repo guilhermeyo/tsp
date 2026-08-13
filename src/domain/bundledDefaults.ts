@@ -3,7 +3,7 @@ import * as Crypto from 'expo-crypto';
 import type { LauncherApp } from './types';
 
 /**
- * The first-run seed, mirroring `targets/widget/BundledDefaults.swift`.
+ * The first-run seed, mirroring `ios/SimplePhoneWidget/BundledDefaults.swift`.
  *
  * The two copies must stay in sync for a non-obvious reason: the widget renders
  * THIS list, compiled in, whenever it cannot read the App Group suite (free

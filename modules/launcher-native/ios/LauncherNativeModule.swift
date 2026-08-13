@@ -3,7 +3,7 @@ import WidgetKit
 import UIKit
 
 // The two strings that make the whole thing work. They are duplicated in
-// targets/widget/ConfigStore.swift (which cannot import this module: a widget
+// ios/SimplePhoneWidget/ConfigStore.swift (which cannot import this module: a widget
 // extension is a separate binary and does not link the app's Expo modules) and
 // in the TypeScript store. If any of the three copies drifts by a single byte,
 // the app and the widget quietly stop seeing the same data.

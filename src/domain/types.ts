@@ -2,19 +2,19 @@
  * The TypeScript half of the data contract with the Swift widget.
  *
  * Every string literal in this file is a Swift enum raw value, byte-for-byte.
- * They travel through JSON into `targets/widget/Theme.swift`, where Swift's
+ * They travel through JSON into `ios/SimplePhoneWidget/Theme.swift`, where Swift's
  * `Codable` matches them by exact string. A single renamed case here (say
  * 'extralarge' instead of 'extraLarge') makes `decodeIfPresent` return the
  * default and the widget silently drifts from the app.
  */
 
-/** Mirrors `FontChoice` in targets/widget/Theme.swift. */
+/** Mirrors `FontChoice` in ios/SimplePhoneWidget/Theme.swift. */
 export type FontChoice = 'monospaced' | 'system' | 'rounded' | 'serif';
 
-/** Mirrors `RowAlignment` in targets/widget/Theme.swift. */
+/** Mirrors `RowAlignment` in ios/SimplePhoneWidget/Theme.swift. */
 export type RowAlignment = 'leading' | 'center' | 'trailing';
 
-/** Mirrors `TextSize` in targets/widget/Theme.swift. `extraLarge` is camelCase in Swift too. */
+/** Mirrors `TextSize` in ios/SimplePhoneWidget/Theme.swift. `extraLarge` is camelCase in Swift too. */
 export type TextSize = 'small' | 'medium' | 'large' | 'extraLarge';
 
 /** Every case, in the order Swift's `CaseIterable` yields them (declaration order). */
@@ -33,7 +33,7 @@ export interface LauncherApp {
   urlString: string;
 }
 
-/** Mirrors `Theme` in targets/widget/Theme.swift. */
+/** Mirrors `Theme` in ios/SimplePhoneWidget/Theme.swift. */
 export interface Theme {
   isDark: boolean;
   font: FontChoice;

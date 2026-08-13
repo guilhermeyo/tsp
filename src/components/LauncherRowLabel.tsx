@@ -5,7 +5,7 @@ import { fontFamilyFor } from '@/theme/fonts';
 import { WIDGET_POINT_SIZE, flexAlign, textAlign, textColor } from '@/theme/tokens';
 
 /**
- * TWIN FILE — change this and `targets/widget/LauncherRowLabel.swift` together.
+ * TWIN FILE — change this and `ios/SimplePhoneWidget/LauncherRowLabel.swift` together.
  *
  * In the old codebase there was exactly ONE row component, a Swift file in
  * `Shared/` compiled into both the app and the widget extension, so the in-app

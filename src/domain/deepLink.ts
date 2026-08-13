@@ -1,5 +1,5 @@
 /**
- * The JS half of the relay contract, twin of `targets/widget/DeepLink.swift`.
+ * The JS half of the relay contract, twin of `ios/SimplePhoneWidget/DeepLink.swift`.
  *
  * A widget row NEVER links to the third-party scheme directly, because iOS
  * always delivers a widget tap to the widget's own host app. The row links to
@@ -10,7 +10,7 @@
  * `simplephone` and may still be installed on the same device. Two apps
  * claiming one scheme means iOS picks a winner arbitrarily, and widget taps
  * would land in the wrong app. This constant, `app.json`'s `scheme` and
- * `targets/widget/DeepLink.swift` must change together.
+ * `ios/SimplePhoneWidget/DeepLink.swift` must change together.
  */
 export const SCHEME = 'simplephonern';
 export const HOST = 'open';

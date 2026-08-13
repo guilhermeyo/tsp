@@ -1,7 +1,7 @@
 # Native notes
 
 Teaching notes for the two native halves of this project: the WidgetKit extension in
-`targets/widget/`, and the local Expo module in `modules/launcher-native/`.
+`ios/SimplePhoneWidget/`, and the local Expo module in `modules/launcher-native/`.
 
 The audience is someone comfortable with TypeScript who has not written iOS code recently, or an
 agent that needs to change one of these files without breaking the other. The README covers *what
@@ -39,7 +39,7 @@ A `TimelineEntry` is one frame of the slideshow: a date, plus whatever data your
 render at that date. Ours is trivial:
 
 ```swift
-// targets/widget/LauncherEntry.swift
+// ios/SimplePhoneWidget/LauncherEntry.swift
 struct LauncherEntry: TimelineEntry {
     let date: Date
     let apps: [LauncherApp]
@@ -58,7 +58,7 @@ each answering a different question:
 
 ### Why `placeholder` uses defaults and `getSnapshot` reads disk
 
-This asymmetry in `targets/widget/LauncherProvider.swift` looks like a bug and is not:
+This asymmetry in `ios/SimplePhoneWidget/LauncherProvider.swift` looks like a bug and is not:
 
 ```swift
 func placeholder(in context: Context) -> LauncherEntry {
@@ -195,7 +195,7 @@ render the 3-row layout at widget font sizes, which overflows badly on a Lock Sc
 
 ## No `NSExtensionPrincipalClass`
 
-`targets/widget/Info.plist` declares only:
+`ios/SimplePhoneWidget/Info.plist` declares only:
 
 ```xml
 <key>NSExtension</key>
@@ -222,7 +222,7 @@ class that does not exist. Same for a storyboard key. Do not add either.
 `modules/launcher-native/` is a **local Expo module**: a small native library that lives in your
 project rather than in `node_modules`, and that Expo's autolinking picks up automatically.
 
-It is not a config plugin (those modify the generated Xcode project at prebuild time and run no
+It is not a config plugin (those modify the Xcode project at prebuild time, which this project never runs, and run no
 device code). It is not the old React Native bridge module either, with its `RCT_EXPORT_METHOD`
 macros and its NSDictionary marshalling. It is a Swift class that declares its JS-facing API in a
 DSL:
@@ -261,7 +261,7 @@ modules/launcher-native/
 { "platforms": ["apple"], "apple": { "modules": ["LauncherNativeModule"] } }
 ```
 
-At prebuild, `expo-modules-autolinking` scans `node_modules` **and the local `modules/` directory**
+During `pod install`, `expo-modules-autolinking` scans `node_modules` **and the local `modules/` directory**
 for this file. Every module it finds gets added to the generated Podfile and registered with the
 runtime. The `modules` array names the Swift **class**, and the name must match exactly, because
 that is the string the generated registration code uses.
@@ -337,7 +337,8 @@ architecture. `AsyncFunction` for everything else. When in doubt, `AsyncFunction
 
 ## Why this module exists at all
 
-`@bacons/apple-targets` ships an `ExtensionStorage` module that almost does this job. Three reasons
+`@bacons/apple-targets` ships an `ExtensionStorage` module that almost does this job (it was
+evaluated while this project was still on CNG). Three reasons
 we do not use it, all of them worth understanding:
 
 1. **`setObject` round-trips through `JSONSerialization`,** which can coerce a JS boolean to `1`.
@@ -406,45 +407,60 @@ app.json  +  config plugins  +  targets/  +  modules/
                   ios/  (disposable)
 ```
 
-You are not choosing between "managed" and "bare". You are choosing whether `ios/` is **input** or
-**output**. This project treats it as output, which means:
+The real question is not "managed or bare". It is whether `ios/` is **input** or **output**.
 
-- Everything that shapes the native project lives in a committed, reviewable, greppable file.
-- Regenerating from scratch is a normal operation, not a recovery procedure.
-- Upgrading the SDK does not mean hand-merging changes into a `.pbxproj` conflict.
-- **Anything you type into Xcode is temporary.** It survives until the next prebuild.
+**This project treats `ios/` as input.** It is committed source, hand-edited in Xcode, and
+`npx expo prebuild` is forbidden here because it would regenerate and destroy it.
 
-The previous native version of this app already worked this way, with XcodeGen and a committed
-`project.yml` generating a gitignored `.xcodeproj`. Moving to Expo changed the generator, not the
-discipline.
+That is a deliberate reversal of the Expo default, made for two reasons:
 
-### Where custom native code goes under CNG
+1. **Learning.** Under CNG the Xcode project is a black box a plugin rebuilds. You learn the
+   plugin's config schema, not Xcode. Owning `ios/` means you can open the project, see both
+   targets, see the embed phase that puts `SimplePhoneWidget.appex` inside `SimplePhone.app`, and
+   change any of it directly.
+2. **Fewer moving parts.** Getting a hand-written Swift extension into a CNG project requires
+   `@bacons/apple-targets`, a single-maintainer package whose pbxproj writer is still an alpha. This
+   project used it once to generate the target, then removed it. What it produced is now ordinary
+   committed project state that nothing regenerates.
 
-The obvious objection is: if `ios/` is disposable, where does hand-written native code live? Three
-places, all committed, all outside `ios/`:
+### What you give up
 
-| What you need                        | Where it goes             | Mechanism                    |
-| ------------------------------------ | ------------------------- | ---------------------------- |
-| A native module callable from JS     | `modules/<name>/`         | local Expo module, autolinked|
-| An app extension (widget, share, ...) | `targets/<name>/`         | `@bacons/apple-targets`      |
-| Xcode project or plist changes       | `app.json` or a plugin    | config plugins               |
+Be honest about the trade, because it is real:
 
-That covers essentially everything short of forking a third-party pod. If you find yourself needing
-a change none of the three can express, that is a signal to write a config plugin, not to start
-committing `ios/`.
+| Under CNG                                  | Under bare (here)                             |
+| ------------------------------------------ | --------------------------------------------- |
+| `app.json` drives icon, splash, plist       | Xcode drives them; `app.json` is inert for those |
+| SDK upgrade: regenerate and move on         | SDK upgrade: hand-merge native changes        |
+| `.pbxproj` never conflicts in git           | `.pbxproj` can and will conflict              |
+| Adding a plugin "just works"                | A plugin that patches native code does nothing |
 
-### One caveat this project actually hits
+That last row is the one that bites. A config plugin only runs during prebuild. **Installing an npm
+package whose install instructions say "add this plugin to app.json" will not work here** — you have
+to read what the plugin does to the native project and apply it in Xcode yourself.
 
-Some settings genuinely live in files that prebuild owns. For example, the SDK 57 escape hatch for
-the Hermes V1 memory regression (Hermes V1 plus `react-native-reanimated` raises memory usage 25 to
-30 percent even when Reanimated is idle) is:
+### Where custom native code goes here
+
+| What you need                         | Where it goes                | Mechanism                     |
+| ------------------------------------- | ---------------------------- | ----------------------------- |
+| A native module callable from JS      | `modules/<name>/`            | local Expo module, autolinked |
+| An app extension (widget, share, ...) | `ios/<TargetName>/`          | a target you add in Xcode     |
+| Xcode project or plist changes        | `ios/`                       | Xcode                         |
+
+Local Expo modules still work exactly as before: `expo-modules-autolinking` scans `modules/` during
+`pod install`, so `modules/launcher-native/` is picked up with no prebuild involved. That is why the
+bridge survived the conversion untouched.
+
+### One caveat worth knowing
+
+Some settings live in files that prebuild used to own. For example, the SDK 57 escape hatch for the
+Hermes V1 memory regression (Hermes V1 plus `react-native-reanimated` raises memory usage 25 to 30
+percent even when Reanimated is idle) is:
 
 ```json
 // ios/Podfile.properties.json
 { "expo.useHermesV1": "false" }
 ```
 
-`ios/` is gitignored and regenerated, so editing that by hand lasts until the next prebuild. Making
-it stick means writing a small config plugin that patches `Podfile.properties.json` during prebuild.
-That is the CNG answer to every "but I need to change a generated file" question: do not change it,
-generate it differently.
+Under CNG that edit would be erased by the next prebuild and would need a config plugin to persist.
+Here it is simply a committed file you edit and keep. This is the upside of bare: the escape hatch
+is a one-line change instead of a plugin.

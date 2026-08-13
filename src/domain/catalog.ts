@@ -3,7 +3,7 @@
  *
  * This is the one Swift file that died and was reborn in TypeScript: only the
  * picker UI ever read `Shared/AppCatalog.swift`, and the picker now lives in
- * React Native. Nothing in `targets/widget/` needs it, so there is no twin to
+ * React Native. Nothing in `ios/SimplePhoneWidget/` needs it, so there is no twin to
  * keep in sync.
  *
  * Schemes were verified during research; a few Apple-system entries use

@@ -1,8 +1,11 @@
 /**
  * Typed facade over the local Swift module in `ios/LauncherNativeModule.swift`.
  *
- * Why this exists at all, given that `@bacons/apple-targets` already ships an
- * `ExtensionStorage` module that almost does the same job:
+ * Why this exists at all. While this project was still on CNG it could have used
+ * `ExtensionStorage` from `@bacons/apple-targets`, which almost does the same
+ * job. (That package is no longer a dependency — see "This is a bare project"
+ * in the README — but the reasoning is what keeps this module hand-written, so
+ * it is worth stating.) Three reasons:
  *
  *  1. `ExtensionStorage.setObject` round-trips the value through object
  *     bridging / JSONSerialization, which can hand Swift the number 1 where JS
