@@ -2,8 +2,10 @@ import * as Crypto from 'expo-crypto';
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef } from 'react';
 import type { ReactNode } from 'react';
 
-import { loadConfig, saveConfig } from './configStore';
+import { consumeQuotesUpgrade, loadConfig, saveConfig } from './configStore';
 
+import { BUNDLED_QUOTES } from '@/domain/quotes';
+import type { QuoteLanguage } from '@/domain/quotes';
 import type { LauncherApp, LauncherConfig, Theme } from '@/domain/types';
 
 /**
@@ -24,6 +26,12 @@ export interface LauncherStore {
   move(from: number, to: number): void;
   /** Merges the given fields into the current theme and rebuilds the whole Theme. */
   updateTheme(patch: Partial<Theme>): void;
+  setQuotesEnabled(enabled: boolean): void;
+  /** Reseeds from the new language's bundle, KEEPING anything the user wrote. */
+  setQuoteLanguage(language: QuoteLanguage): void;
+  /** Trims, ignores empty, ignores an exact duplicate, appends to the END. */
+  addQuote(text: string): void;
+  removeQuoteAt(index: number): void;
 }
 
 type Action =
@@ -32,7 +40,11 @@ type Action =
   | { type: 'removeAt'; index: number }
   | { type: 'removeById'; id: string }
   | { type: 'move'; from: number; to: number }
-  | { type: 'updateTheme'; patch: Partial<Theme> };
+  | { type: 'updateTheme'; patch: Partial<Theme> }
+  | { type: 'setQuotesEnabled'; enabled: boolean }
+  | { type: 'setQuoteLanguage'; language: QuoteLanguage }
+  | { type: 'addQuote'; text: string }
+  | { type: 'removeQuoteAt'; index: number };
 
 /**
  * Returning the SAME object reference means "nothing happened". The persistence
@@ -83,6 +95,41 @@ function reduce(state: LauncherConfig, action: Action): LauncherConfig {
       return { ...state, apps };
     }
 
+    case 'setQuotesEnabled':
+      if (state.quotes.enabled === action.enabled) return state;
+      return { ...state, quotes: { ...state.quotes, enabled: action.enabled } };
+
+    case 'setQuoteLanguage': {
+      if (state.quotes.language === action.language) return state;
+      // Anything not in the OLD bundle is the user's own writing, so it
+      // survives the switch. Without this, changing language once would throw
+      // away every line they added, silently, with no undo.
+      const previous = new Set(BUNDLED_QUOTES[state.quotes.language]);
+      const written = state.quotes.items.filter((item) => !previous.has(item));
+      return {
+        ...state,
+        quotes: {
+          ...state.quotes,
+          language: action.language,
+          items: [...BUNDLED_QUOTES[action.language], ...written],
+        },
+      };
+    }
+
+    case 'addQuote': {
+      const text = action.text.trim();
+      if (text === '' || state.quotes.items.includes(text)) return state;
+      return { ...state, quotes: { ...state.quotes, items: [...state.quotes.items, text] } };
+    }
+
+    case 'removeQuoteAt': {
+      const { index } = action;
+      if (index < 0 || index >= state.quotes.items.length) return state;
+      const items = state.quotes.items.slice();
+      items.splice(index, 1);
+      return { ...state, quotes: { ...state.quotes, items } };
+    }
+
     case 'updateTheme':
       // Always a new object, even when the patch changes nothing. Tapping the
       // already-selected font rewrites and reloads in the Swift version too.
@@ -100,7 +147,11 @@ export function LauncherStoreProvider({ children }: { children: ReactNode }) {
 
   // What is already on disk. Starts as the value we just read, so mounting
   // never writes anything back.
-  const persisted = useRef(config);
+  // Normally the loaded config IS what is on disk, so mounting writes nothing.
+  // The exception is a config that had to be upgraded during load (quotes
+  // synthesized from the bundle): that version exists only here until it is
+  // written, and the native relay reads the shared container, not this.
+  const persisted = useRef<LauncherConfig | null>(consumeQuotesUpgrade() ? null : config);
 
   useEffect(() => {
     if (persisted.current === config) return;
@@ -146,6 +197,18 @@ export function LauncherStoreProvider({ children }: { children: ReactNode }) {
       },
       updateTheme(patch) {
         dispatch({ type: 'updateTheme', patch });
+      },
+      setQuotesEnabled(enabled) {
+        dispatch({ type: 'setQuotesEnabled', enabled });
+      },
+      setQuoteLanguage(language) {
+        dispatch({ type: 'setQuoteLanguage', language });
+      },
+      addQuote(text) {
+        dispatch({ type: 'addQuote', text });
+      },
+      removeQuoteAt(index) {
+        dispatch({ type: 'removeQuoteAt', index });
       },
     }),
     [config]

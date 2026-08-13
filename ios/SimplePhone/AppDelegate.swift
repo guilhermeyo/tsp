@@ -37,6 +37,13 @@ private enum Relay {
     return target
   }
 
+  /// How long the phrase is held before the target app is asked to open.
+  ///
+  /// Long enough to read five words, short enough not to feel like a toll. The
+  /// handoff is not free either: iOS spends a moment of its own on the
+  /// transition, so the felt pause is longer than this number.
+  private static let quoteDuration: TimeInterval = 1.4
+
   /// Returns true when `url` was ours, whether or not the target opened.
   @discardableResult
   static func handle(_ url: URL, window: UIWindow?) -> Bool {
@@ -46,12 +53,28 @@ private enum Relay {
     // `didFinishLaunchingWithOptions`, where opening synchronously is too early
     // for LaunchServices.
     DispatchQueue.main.async {
-      UIApplication.shared.open(target, options: [:]) { success in
-        guard !success else { return }
-        presentFailure(target, window: window)
+      guard let quote = QuoteScreen.present(in: window) else {
+        open(target, window: window)
+        return
+      }
+      // The phrase is on screen NOW, painted by UIKit over the launch image,
+      // with React Native still booting behind it. Doing this in JavaScript
+      // would have meant waiting out the whole cold start before the user saw
+      // a single word.
+      _ = quote
+      DispatchQueue.main.asyncAfter(deadline: .now() + quoteDuration) {
+        open(target, window: window)
       }
     }
     return true
+  }
+
+  private static func open(_ target: URL, window: UIWindow?) {
+    QuoteScreen.releaseHold()
+    UIApplication.shared.open(target, options: [:]) { success in
+      guard !success else { return }
+      presentFailure(target, window: window)
+    }
   }
 
   /// The original swallowed failure, so a row for an app you do not have simply
@@ -98,6 +121,18 @@ class AppDelegate: ExpoAppDelegate {
       in: window,
       launchOptions: launchOptions)
 #endif
+
+    // The phrase window has to come down when the user comes BACK, otherwise a
+    // stale line sits over the app list. Foregrounding is the right moment: it
+    // covers returning from the target app, and it also covers the case where
+    // the target never opened and the alert was shown on top.
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      QuoteScreen.dismiss()
+    }
 
     // Cold launch FROM a widget tap. `application(_:open:options:)` is not
     // called in this case -- the URL rides in launchOptions -- so the relay has

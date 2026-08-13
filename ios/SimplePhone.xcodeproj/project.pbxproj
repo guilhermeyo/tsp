@@ -15,6 +15,7 @@
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		D72AF3E268B7DAC6966D58AB /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F0F94EE4F1707B276B4961A5 /* PrivacyInfo.xcprivacy */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
+		AA11748422D0307B40044C1DB /* QuoteScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11748412D0307B40044C1DA /* QuoteScreen.swift */; };
 		XX12B55A1EDABF083C3B51XX /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = XX470101BAEB8E0BBC8B0DXX /* WidgetKit.framework */; };
 		XX1A6800511A685AB346D2XX /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = XXA12889081EB894481655XX /* AppIntents.framework */; };
 		XX3C562DEF346B45594832XX /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = XXCAF23C3FC41F82140FA1XX /* ActivityKit.framework */; };
@@ -59,6 +60,7 @@
 		EF104698A684A8CCFCF0B92C /* Pods-SimplePhone.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SimplePhone.debug.xcconfig"; path = "Target Support Files/Pods-SimplePhone/Pods-SimplePhone.debug.xcconfig"; sourceTree = "<group>"; };
 		F0F94EE4F1707B276B4961A5 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = SimplePhone/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = SimplePhone/AppDelegate.swift; sourceTree = "<group>"; };
+		AA11748412D0307B40044C1DA /* QuoteScreen.swift */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.swift; name = QuoteScreen.swift; path = SimplePhone/QuoteScreen.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* SimplePhone-Bridging-Header.h */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.c.h; name = "SimplePhone-Bridging-Header.h"; path = "SimplePhone/SimplePhone-Bridging-Header.h"; sourceTree = "<group>"; };
 		F4EF146CC7BF62A5188DA886 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-SimplePhone/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		XX470101BAEB8E0BBC8B0DXX /* WidgetKit.framework */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = undefined; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
@@ -120,6 +122,7 @@
 			isa = PBXGroup;
 			children = (
 				F11748412D0307B40044C1D9 /* AppDelegate.swift */,
+				AA11748412D0307B40044C1DA /* QuoteScreen.swift */,
 				F11748442D0722820044C1D9 /* SimplePhone-Bridging-Header.h */,
 				BB2F792B24A3F905000567C9 /* Supporting */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
@@ -477,6 +480,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
+				AA11748422D0307B40044C1DB /* QuoteScreen.swift in Sources */,
 				0B0579DA08D12C1D68FD80D9 /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

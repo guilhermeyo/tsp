@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { SegmentedControl } from '@/components/SegmentedControl';
+import { QUOTE_LANGUAGE_LABEL } from '@/domain/quotes';
 import { WidgetPreviewCard } from '@/components/WidgetPreviewCard';
 import {
   ALIGNMENT_LABELS,
@@ -29,6 +30,7 @@ const PREVIEW_INSET = 12;
 export default function AppearanceScreen() {
   const store = useLauncherStore();
   const theme = store.config.theme;
+  const quotes = store.config.quotes;
   const router = useRouter();
   const { colors } = useNavigationTheme();
 
@@ -153,6 +155,46 @@ export default function AppearanceScreen() {
             <View style={styles.disclosure}>
               <Text style={[styles.value, { color: secondaryLabel }]}>
                 {SIZE_LABELS[theme.size]}
+              </Text>
+              <SymbolView
+                name="chevron.right"
+                size={14}
+                weight="semibold"
+                tintColor={tertiaryLabel}
+                style={styles.chevron}
+              />
+            </View>
+          </Pressable>
+        </View>
+
+        {/*
+          The phrase shown while the relay hands off to the target app. It lives
+          in Appearance rather than its own top-level screen because it is the
+          look of the launch, not a separate feature: the same dark and font
+          choices above drive it.
+        */}
+        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>Phrase on open</Text>
+
+        <View style={[styles.card, { backgroundColor: colors.card }]}>
+          <View style={styles.row}>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Show a phrase</Text>
+            <Switch
+              value={quotes.enabled}
+              onValueChange={(value) => store.setQuotesEnabled(value)}
+            />
+          </View>
+
+          <View style={[styles.separator, { backgroundColor: colors.border }]} />
+
+          <Pressable
+            accessibilityRole="button"
+            style={styles.row}
+            onPress={() => router.push('/(modals)/appearance/quotes')}
+          >
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Phrases</Text>
+            <View style={styles.disclosure}>
+              <Text style={[styles.value, { color: secondaryLabel }]}>
+                {`${QUOTE_LANGUAGE_LABEL[quotes.language]}, ${quotes.items.length}`}
               </Text>
               <SymbolView
                 name="chevron.right"

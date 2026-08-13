@@ -3,13 +3,16 @@ import * as Crypto from 'expo-crypto';
 import { LauncherNative } from '../../modules/launcher-native';
 
 import { BUNDLED_DEFAULTS } from '@/domain/bundledDefaults';
+import { BUNDLED_QUOTES, isQuoteLanguage } from '@/domain/quotes';
 import {
+  DEFAULT_QUOTES,
   DEFAULT_THEME,
   isFontChoice,
   isRowAlignment,
   isTextSize,
   type LauncherApp,
   type LauncherConfig,
+  type Quotes,
   type Theme,
 } from '@/domain/types';
 
@@ -28,7 +31,56 @@ import {
  */
 
 function defaultConfig(): LauncherConfig {
-  return { apps: BUNDLED_DEFAULTS.slice(), theme: { ...DEFAULT_THEME } };
+  return {
+    apps: BUNDLED_DEFAULTS.slice(),
+    theme: { ...DEFAULT_THEME },
+    quotes: { ...DEFAULT_QUOTES, items: BUNDLED_QUOTES[DEFAULT_QUOTES.language].slice() },
+  };
+}
+
+/**
+ * Resilient like `decodeTheme`, and for the same reason: a config written
+ * before quotes existed has no `quotes` key at all, and must upgrade in place
+ * rather than reset.
+ *
+ * An EMPTY `items` is treated as "never seeded" and refilled from the bundle,
+ * not as "the user deleted every line". Deleting the last phrase is what the
+ * `enabled` switch is for, and silently showing nothing would look like a bug.
+ */
+/**
+ * Set when the payload on disk had no usable `quotes` and one had to be
+ * synthesized. The store reads it once, on mount, and forces a write.
+ *
+ * Without this, a config written before this feature existed upgrades only in
+ * MEMORY: the app shows a language and a phrase count, while the shared
+ * container still has no `quotes` key, so the native relay finds nothing and
+ * shows no phrase. It would self-heal the first time the user changed
+ * anything, which is exactly the kind of "works after you poke it" bug that
+ * reads as broken.
+ */
+let didSynthesizeQuotes = false;
+
+/** Reads and clears. Only the first caller after a load gets `true`. */
+export function consumeQuotesUpgrade(): boolean {
+  const value = didSynthesizeQuotes;
+  didSynthesizeQuotes = false;
+  return value;
+}
+
+function decodeQuotes(value: unknown): Quotes {
+  if (!isRecord(value)) {
+    didSynthesizeQuotes = true;
+    return { ...DEFAULT_QUOTES, items: BUNDLED_QUOTES[DEFAULT_QUOTES.language].slice() };
+  }
+  const language = isQuoteLanguage(value.language) ? value.language : DEFAULT_QUOTES.language;
+  const items = Array.isArray(value.items)
+    ? value.items.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+    : [];
+  return {
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : DEFAULT_QUOTES.enabled,
+    language,
+    items: items.length > 0 ? items : ((didSynthesizeQuotes = true), BUNDLED_QUOTES[language].slice()),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -103,7 +155,7 @@ export function loadConfig(): LauncherConfig {
   // decoder fails the same way, and `.default` is what the user then sees.
   if (apps === null) return defaultConfig();
 
-  return { apps, theme: decodeTheme(parsed.theme) };
+  return { apps, theme: decodeTheme(parsed.theme), quotes: decodeQuotes(parsed.quotes) };
 }
 
 /**
@@ -119,6 +171,11 @@ function serialize(config: LauncherConfig): string {
       name: app.name,
       urlString: app.urlString,
     })),
+    quotes: {
+      enabled: config.quotes.enabled,
+      language: config.quotes.language,
+      items: config.quotes.items,
+    },
     theme: {
       isDark: config.theme.isDark,
       font: config.theme.font,
