@@ -11,7 +11,14 @@ import { useReorderableDrag } from 'react-native-reorderable-list';
 import type { LauncherApp } from '@/domain/types';
 import { useTheme } from '@/store/LauncherStore';
 import { fontFamilyFor } from '@/theme/fonts';
-import { LIST_POINT_SIZE, flexAlign, textAlign, textColor } from '@/theme/tokens';
+import {
+  LIST_LINE_HEIGHT,
+  LIST_POINT_SIZE,
+  flexAlign,
+  textAlign,
+  textColor,
+  trackingFor,
+} from '@/theme/tokens';
 
 /** Width of the revealed Delete panel, matching the iOS list action button. */
 const ACTION_WIDTH = 88;
@@ -115,12 +122,29 @@ export function AppRow({ app, editing, onPress, onDelete }: AppRowProps) {
 
         <View style={[styles.nameBox, { alignItems: flexAlign(theme.alignment) }]}>
           <Text
+            // The widget shrinks a name that does not fit; this list used to
+            // wrap it instead, so the same app looked like two different apps
+            // in the two places. One line plus shrink-to-fit, same floor as
+            // `.minimumScaleFactor(0.5)`, makes them agree. On iOS
+            // `adjustsFontSizeToFit` is inert without `numberOfLines`.
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.5}
             style={{
               fontFamily: fontFamilyFor(theme.font),
               fontSize: LIST_POINT_SIZE[theme.size],
+              // Semibold, matching `LauncherRowLabel` in both languages. It was
+              // missing here, so the list rendered regular directly beneath a
+              // semibold preview of the same names and the pair looked like two
+              // unrelated fonts. Weight is fixed everywhere; the theme owns
+              // family and size only.
+              fontWeight: '600',
+              lineHeight: LIST_LINE_HEIGHT[theme.size],
+              letterSpacing: trackingFor(theme.font, LIST_POINT_SIZE[theme.size]),
               color: textColor(theme),
               // Both projections are needed: `alignItems` places the text box,
-              // `textAlign` places the lines inside it once a long name wraps.
+              // `textAlign` places the glyphs inside it once shrink-to-fit has
+              // left the box wider than the line it holds.
               textAlign: textAlign(theme.alignment),
             }}
           >

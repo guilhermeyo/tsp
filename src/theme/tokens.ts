@@ -1,4 +1,4 @@
-import type { RowAlignment, TextSize, Theme } from '@/domain/types';
+import type { FontChoice, RowAlignment, TextSize, Theme } from '@/domain/types';
 
 /**
  * Point sizes for the home-screen widget rows. Mirrors `TextSize.widgetPointSize`.
@@ -18,6 +18,35 @@ export const LIST_POINT_SIZE: Record<TextSize, number> = {
   large: 28,
   extraLarge: 34,
 };
+
+/**
+ * Line box height for the in-app list rows, roughly 1.2x `LIST_POINT_SIZE`.
+ *
+ * SwiftUI sizes a `Text` line from the font's own metrics; React Native leaves
+ * `lineHeight` unset, which lets the leading drift between families — the same
+ * row is visibly taller in serif than in monospaced. Pinning it keeps the row
+ * rhythm identical across the four faces, which is the whole point of the
+ * appearance picker offering them side by side.
+ */
+export const LIST_LINE_HEIGHT: Record<TextSize, number> = {
+  small: 22,
+  medium: 28,
+  large: 34,
+  extraLarge: 41,
+};
+
+/**
+ * Letter spacing, in points, for a name rendered at `size` in `font`.
+ *
+ * Proportional faces are drawn with tracking tuned for body copy, so at display
+ * sizes they read loose; SF's own optical sizing tightens them, and -2% is the
+ * usual approximation of that. A monospaced face gets 0 on purpose: its fixed
+ * advance width IS the reason to pick it, and tracking would shift every glyph
+ * off the grid it exists to hold.
+ */
+export function trackingFor(font: FontChoice, size: number): number {
+  return font === 'monospaced' ? 0 : -size * 0.02;
+}
 
 /** Mirrors `Theme.textColor` (`.white` / `.black`). */
 export function textColor(theme: Theme): string {

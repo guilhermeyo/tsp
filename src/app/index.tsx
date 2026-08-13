@@ -1,171 +1,159 @@
-import { SymbolView } from 'expo-symbols';
-import { Stack, useRouter, useTheme as useNavigationTheme } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Gesture } from 'react-native-gesture-handler';
-import ReorderableList from 'react-native-reorderable-list';
-import type { ReorderableListReorderEvent } from 'react-native-reorderable-list';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Constants from 'expo-constants';
+import { useRouter, useTheme as useNavigationTheme } from 'expo-router';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { AppRow } from '@/components/AppRow';
-import { EmptyState } from '@/components/EmptyState';
-import type { LauncherApp } from '@/domain/types';
+import { DisclosureRow, ROW_PADDING, SECTION_INSET } from '@/components/DisclosureRow';
+import { WidgetPreviewCard } from '@/components/WidgetPreviewCard';
+import { FONT_LABELS, LANGUAGE_LABELS, SIZE_LABELS } from '@/domain/types';
 import { useLauncherStore } from '@/store/LauncherStore';
 
-/**
- * SCREEN 1. The whole app is this list plus three sheets hanging off its
- * toolbar.
- *
- * Toolbar shape is inherited from the original, where it was assembled from two
- * places: `AppListView` contributed Edit (leading) and plus (`.primaryAction`,
- * which is trailing on iOS), and `RootView` contributed the gear. Net result is
- * Edit on the left, plus then gear on the right.
- */
-/**
- * Height of an EXPANDED iOS large-title navigation bar, below the status bar:
- * 44pt of standard bar plus 52pt of large title.
- *
- * Hardcoded on purpose. `useHeaderHeight()` cannot be used here: for a large
- * title it reports the COLLAPSED height and then receives debounced native
- * updates as the title shrinks, so a padding driven by it would move while the
- * user scrolls.
- */
-const LARGE_TITLE_HEADER_HEIGHT = 96;
+/** Matches the preview inset the Appearance screen uses. See DisclosureRow. */
+const PREVIEW_INSET = 12;
 
-export default function AppListScreen() {
+/**
+ * THE HUB. Every section of the app is one tap from here.
+ *
+ * This used to be the app list, with everything else hidden behind a gear in
+ * the corner. That shape came from the SwiftUI original, where the launcher WAS
+ * the list and appearance was its only setting. It stopped being true the
+ * moment there were four sections, and a single icon in a corner is the wrong
+ * rank for any of them -- Weather in particular is a second widget, not a
+ * preference of the first.
+ *
+ * The rule this screen follows, and the reason (modals) still exists: a section
+ * is a PLACE, so it pushes and keeps a back chevron; a sheet is a TASK with
+ * cancel-or-confirm semantics, which is only the app form and the catalog.
+ *
+ * There is no plus button here. Adding what, from a screen that lists five
+ * different things? The preview card is the affordance instead: it is the
+ * app list, it looks like the app list, and tapping it lands on the list with
+ * its own plus. Adding an app from a cold launch is still two taps.
+ */
+export default function HubScreen() {
   const store = useLauncherStore();
-  const { colors } = useNavigationTheme();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const [editing, setEditing] = useState(false);
+  const { colors } = useNavigationTheme();
 
-  const apps = store.config.apps;
+  const { apps, theme, quotes, weather, language } = store.config;
 
-  /**
-   * The list's drag gesture, owned here so it can be switched off outside Edit
-   * mode. Two things depend on that.
-   *
-   * Fidelity: the original has no long-press-to-drag-anytime. Dragging exists
-   * only while `EditButton` is active.
-   *
-   * Mechanics: this pan sits on the list container and activates on any small
-   * movement, so left alone it would win the race against the per-row
-   * swipe-to-delete pan and quietly break it. Disabling it outside Edit mode,
-   * and disabling the swipe inside Edit mode, makes the two interactions
-   * mutually exclusive by construction rather than by gesture arbitration.
-   */
-  const dragGesture = useMemo(() => Gesture.Pan().enabled(editing), [editing]);
+  const secondaryLabel = theme.isDark ? 'rgba(235, 235, 245, 0.6)' : 'rgba(60, 60, 67, 0.6)';
 
-  function openForm(id?: string): void {
-    router.push(
-      id === undefined
-        ? '/(modals)/app-form'
-        : { pathname: '/(modals)/app-form', params: { id } }
-    );
-  }
+  // Off is a real state for both of these and reads better than a zero: the
+  // user did not run out of phrases, they turned phrases off.
+  const weatherValue = !weather.enabled
+    ? 'Off'
+    : weather.placeName === ''
+      ? 'No city'
+      : weather.placeName;
+  const phrasesValue = quotes.enabled ? `${quotes.items.length}` : 'Off';
 
-  function handleReorder({ from, to }: ReorderableListReorderEvent): void {
-    // Committed on drop, with no Done step: array order IS the widget's
-    // render order, and the store persists and reloads the timeline for us.
-    store.move(from, to);
-  }
+  const version = Constants.expoConfig?.version ?? '';
 
   return (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <Stack.Screen
-        options={{
-          // Rendered even when the list is empty, where it toggles a mode with
-          // nothing to show. That is the original's behavior, not an oversight.
-          headerLeft: () => (
-            <Pressable onPress={() => setEditing((value) => !value)} hitSlop={8}>
-              <Text
-                style={[
-                  styles.editLabel,
-                  { color: colors.primary, fontWeight: editing ? '600' : '400' },
-                ]}
-              >
-                {editing ? 'Done' : 'Edit'}
-              </Text>
-            </Pressable>
-          ),
-          headerRight: () => (
-            <View style={styles.headerActions}>
-              <Pressable onPress={() => openForm()} hitSlop={8} accessibilityLabel="Add app">
-                <SymbolView name="plus" size={22} tintColor={colors.primary} style={styles.icon} />
-              </Pressable>
-              <Pressable
-                onPress={() => router.push('/(modals)/appearance')}
-                hitSlop={8}
-                accessibilityLabel="Appearance"
-              >
-                <SymbolView
-                  name="gearshape"
-                  size={22}
-                  tintColor={colors.primary}
-                  style={styles.icon}
-                />
-              </Pressable>
-            </View>
-          ),
-        }}
-      />
+    <ScrollView
+      // Required for the large title to collapse into the bar on scroll -- the
+      // native header measures the scroll view's adjusted inset. The app list
+      // is the one screen that cannot use this; see the long note in apps.tsx.
+      contentInsetAdjustmentBehavior="automatic"
+      style={{ backgroundColor: colors.background }}
+      contentContainerStyle={styles.content}
+    >
+      {/*
+        No card behind it and no theme background painted around it:
+        WidgetPreviewCard is the only component in the app allowed to paint
+        `theme.backgroundColor`, and the note in _layout.tsx says why.
+      */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Apps"
+        style={styles.previewRow}
+        onPress={() => router.push('/apps')}
+      >
+        <WidgetPreviewCard config={store.config} />
+      </Pressable>
 
-      {apps.length === 0 ? (
-        <EmptyState />
-      ) : (
-        <ReorderableList
-          data={apps}
-          keyExtractor={(app: LauncherApp) => app.id}
-          onReorder={handleReorder}
-          panGesture={dragGesture}
-          dragEnabled={editing}
-          // The large title's vertical offset lives in the CONTENT here, not in
-          // a UIKit content inset, and that is load-bearing.
-          //
-          // react-native-reorderable-list has no notion of contentInset (grep
-          // the package: zero hits) and models scroll position as a shared value
-          // seeded to 0, so it assumes a resting contentOffset.y of 0. Under a
-          // large title, react-native-screens lays the content out at screen
-          // y=0 and UIKit parks contentOffset.y at about -155 via
-          // adjustedContentInset. The library disables scrolling when a drag
-          // starts, UIKit then recomputes the "automatic" inset to zero, and the
-          // whole content view slams up by the header height, painting every row
-          // over the nav bar. The dragged cell alone gets compensated back down,
-          // which is why one row stays put with a gap above it.
-          //
-          // Padding cannot be recomputed out from under us, so resting offset is
-          // a true 0 and there is nothing left to collapse. The title still
-          // collapses on scroll because UIKit drives that from contentOffset.
-          contentInsetAdjustmentBehavior="never"
-          contentContainerStyle={{ paddingTop: insets.top + LARGE_TITLE_HEADER_HEIGHT }}
-          renderItem={({ item, index }) => (
-            <AppRow
-              app={item}
-              editing={editing}
-              onPress={() => openForm(item.id)}
-              onDelete={() => store.removeAt(index)}
-            />
-          )}
+      {/* The features. Each one is something the widget or the relay renders. */}
+      <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <DisclosureRow label="Apps" value={`${apps.length}`} onPress={() => router.push('/apps')} />
+        <View style={[styles.separator, { backgroundColor: colors.border }]} />
+        <DisclosureRow
+          label="Weather"
+          value={weatherValue}
+          onPress={() => router.push('/weather')}
         />
-      )}
-    </View>
+        <View style={[styles.separator, { backgroundColor: colors.border }]} />
+        <DisclosureRow
+          label="Phrases"
+          value={phrasesValue}
+          onPress={() => router.push('/phrases')}
+        />
+      </View>
+
+      {/*
+        A second card, not three more rows in the first one. These two are not
+        features: they are settings that cut ACROSS every feature above. Font
+        and size drive the launcher rows and the preview; language drives both
+        the phrase catalog here and the weekday abbreviations the weather widget
+        renders in another process.
+      */}
+      <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <DisclosureRow
+          label="Appearance"
+          value={`${FONT_LABELS[theme.font]}, ${SIZE_LABELS[theme.size]}`}
+          onPress={() => router.push('/appearance')}
+        />
+        <View style={[styles.separator, { backgroundColor: colors.border }]} />
+        <DisclosureRow
+          label="Language"
+          value={LANGUAGE_LABELS[language]}
+          onPress={() => router.push('/language')}
+        />
+      </View>
+
+      {/*
+        The Open-Meteo line is not decoration. Their free tier is CC BY 4.0,
+        which requires attribution, and the widget itself has no room for it --
+        five columns of forecast fill a systemMedium completely. This is where
+        the app pays for the data.
+      */}
+      <View style={styles.footer}>
+        <Text style={[styles.footerText, { color: secondaryLabel }]}>
+          {version === '' ? 'The Simple Phone' : `The Simple Phone ${version}`}
+        </Text>
+        <Text style={[styles.footerText, { color: secondaryLabel }]}>
+          Weather data by Open-Meteo.com, CC BY 4.0
+        </Text>
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
+  content: {
+    paddingBottom: 32,
   },
-  headerActions: {
-    flexDirection: 'row',
+  previewRow: {
+    paddingHorizontal: SECTION_INSET + PREVIEW_INSET,
+    paddingVertical: PREVIEW_INSET,
+  },
+  card: {
+    marginTop: 24,
+    marginHorizontal: SECTION_INSET,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: ROW_PADDING,
+  },
+  footer: {
     alignItems: 'center',
-    gap: 20,
+    gap: 4,
+    paddingHorizontal: SECTION_INSET + ROW_PADDING,
+    paddingTop: 32,
   },
-  icon: {
-    width: 22,
-    height: 22,
-  },
-  editLabel: {
-    fontSize: 17,
+  footerText: {
+    fontSize: 13,
+    textAlign: 'center',
   },
 });

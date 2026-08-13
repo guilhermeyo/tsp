@@ -2,6 +2,7 @@ internal import Expo
 import React
 import ReactAppDependencyProvider
 import UIKit
+import WidgetKit
 
 /// The relay, handled in Swift before React Native exists.
 ///
@@ -74,6 +75,19 @@ private enum Relay {
   }
 
   private static func open(_ target: URL, window: UIWindow?) {
+    // Free refresh for the weather widget, and the highest-leverage one
+    // available. WidgetKit's daily budget is only charged for reloads requested
+    // while the app is in the BACKGROUND, and a relay means the user just
+    // tapped a widget, so the app is foregrounded right now. Every launcher tap
+    // therefore nudges the forecast along at no cost to the 45-minute schedule.
+    //
+    // The kind string is spelled out because `DeepLink` lives in the widget
+    // target and is not compiled into the app. It must match
+    // WeatherWidget.swift exactly; a typo here fails silently, which is the
+    // worst that can happen — this is an accelerator, not a correctness
+    // requirement, and it can be deleted without breaking anything.
+    WidgetCenter.shared.reloadTimelines(ofKind: "SimplePhoneWeather")
+
     // No `releaseHold` here. The relay is released when the app has actually
     // LEFT (`didEnterBackground`), or below when the open failed. Releasing at
     // the call site left the handoff itself unguarded, so an activation landing

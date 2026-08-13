@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import type { Theme } from '@/domain/types';
 import { fontFamilyFor } from '@/theme/fonts';
-import { WIDGET_POINT_SIZE, flexAlign, textAlign, textColor } from '@/theme/tokens';
+import { WIDGET_POINT_SIZE, flexAlign, textAlign, textColor, trackingFor } from '@/theme/tokens';
 
 /**
  * TWIN FILE — change this and `ios/SimplePhoneWidget/LauncherRowLabel.swift` together.
@@ -15,8 +15,9 @@ import { WIDGET_POINT_SIZE, flexAlign, textAlign, textColor } from '@/theme/toke
  * compiler is now enforced by this comment.
  *
  * Every property below is a deliberate mirror of the Swift original:
- * font family, 20/28/36/44 point size, semibold weight, 0.5 dim, line limit,
- * shrink-to-fit and the two-axis alignment. None of them are free to drift.
+ * font family, 20/28/36/44 point size, semibold weight, tracking, 0.5 dim,
+ * line limit, shrink-to-fit and the two-axis alignment. None of them are free
+ * to drift.
  */
 export interface LauncherRowLabelProps {
   name: string;
@@ -56,6 +57,10 @@ export function LauncherRowLabel({
             // preview's whole job is to be widget-accurate; shrinking it to
             // list sizes would make the preview lie.
             fontSize: WIDGET_POINT_SIZE[theme.size],
+            // Mirrors `.tracking` on the Swift twin. Zero for monospaced, so
+            // the fixed advance width survives; slightly negative for the
+            // proportional faces, which read loose at these display sizes.
+            letterSpacing: trackingFor(theme.font, WIDGET_POINT_SIZE[theme.size]),
             color: textColor(theme),
             opacity: dimmed ? 0.5 : 1,
             textAlign: textAlign(theme.alignment),

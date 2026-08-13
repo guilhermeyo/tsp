@@ -24,7 +24,7 @@ export default function NotFoundScreen() {
       <View style={styles.container}>
         <Text style={[styles.message, { color, fontFamily }]}>This screen does not exist.</Text>
         <Link href="/" style={[styles.link, { color, fontFamily }]}>
-          Back to the app list
+          Back to TSP
         </Link>
       </View>
     </>

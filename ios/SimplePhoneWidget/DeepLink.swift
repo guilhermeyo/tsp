@@ -26,6 +26,16 @@ enum DeepLink {
         charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
     )
 
+    /// `simplephonern://weather` — what the weather widget points at.
+    ///
+    /// A new HOST on the same scheme, never a new scheme. `target(from:)` and
+    /// its twin in the app both require `host == "open"`, so this one is not a
+    /// relay: the app's handler returns false, the URL falls through to
+    /// `RCTLinkingManager`, and Expo Router routes it to /weather. Adding a
+    /// second scheme would instead mean a second entry in Info.plist and
+    /// another chance to collide with the old Swift app.
+    static let weatherURL = URL(string: "\(scheme)://weather")!
+
     /// `simplephonern://open?u=<percent-encoded app url>` — what a widget row points at.
     static func launchURL(for app: LauncherApp) -> URL {
         var components = URLComponents()

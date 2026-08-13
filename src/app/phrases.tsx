@@ -1,39 +1,45 @@
-import { Stack, useTheme as useNavigationTheme } from 'expo-router';
+import { Stack, useRouter, useTheme as useNavigationTheme } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { Fragment, useState } from 'react';
 import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
 
+import { DisclosureRow, ROW_PADDING, SECTION_INSET } from '@/components/DisclosureRow';
 import {
   QUOTE_DURATIONS,
   QUOTE_DURATION_LABEL,
   QUOTE_DURATION_MS,
-  QUOTE_LANGUAGES,
-  QUOTE_LANGUAGE_LABEL,
 } from '@/domain/quotes';
+import { LANGUAGE_LABELS } from '@/domain/types';
 import { useLauncherStore } from '@/store/LauncherStore';
 import { fontFamilyFor } from '@/theme/fonts';
 
-const SECTION_INSET = 20;
-const ROW_PADDING = 16;
-
 /**
- * The phrase list: pick a language, add your own, delete what you do not want.
+ * The phrase feature, whole: turn it on, choose its language, set how long it
+ * stays, add your own, delete what you do not want.
+ *
+ * The on/off switch used to live in Appearance and the language used to be a
+ * list of its own right here. Both moved for the same reason: the root is a hub
+ * now, so a feature owns its own screen, and language stopped being a property
+ * of the phrase catalog the moment the weather widget started rendering weekday
+ * names with it. The row below only points at the one place that setting lives.
  *
  * Switching language REPLACES the bundled set and keeps anything the user
  * wrote, which the store handles. That asymmetry is deliberate: the bundled
  * lines are content in one language and meaningless in the other, while a line
  * the user typed is theirs regardless.
  */
-export default function QuotesScreen() {
+export default function PhrasesScreen() {
   const store = useLauncherStore();
-  const { quotes, theme } = store.config;
+  const { quotes, theme, language } = store.config;
+  const router = useRouter();
   const { colors } = useNavigationTheme();
   const [draft, setDraft] = useState('');
 
@@ -57,29 +63,32 @@ export default function QuotesScreen() {
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
       >
-        <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>Language</Text>
+        <View style={[styles.firstCard, styles.card, { backgroundColor: colors.card }]}>
+          {/*
+            Off means the relay opens the target app immediately, with no cover
+            phrase. Everything below stays live and editable while it is off:
+            turning the feature back on should find the list where it was left.
+          */}
+          <View style={styles.row}>
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Show a phrase</Text>
+            <Switch
+              value={quotes.enabled}
+              onValueChange={(value) => store.setQuotesEnabled(value)}
+            />
+          </View>
 
-        <View style={[styles.card, { backgroundColor: colors.card }]}>
-          {QUOTE_LANGUAGES.map((language, index) => (
-            <Fragment key={language}>
-              {index > 0 && (
-                <View style={[styles.separator, { backgroundColor: colors.border }]} />
-              )}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ selected: language === quotes.language }}
-                style={styles.row}
-                onPress={() => store.setQuoteLanguage(language)}
-              >
-                <Text style={[styles.rowLabel, { color: colors.text }]}>
-                  {QUOTE_LANGUAGE_LABEL[language]}
-                </Text>
-                {language === quotes.language && (
-                  <SymbolView name="checkmark" size={15} weight="semibold" tintColor={colors.primary} />
-                )}
-              </Pressable>
-            </Fragment>
-          ))}
+          <View style={[styles.separator, { backgroundColor: colors.border }]} />
+
+          {/*
+            A pointer, not a picker. The value shown is `config.language`, the
+            authoritative copy; `quotes.language` mirrors it and is written by
+            the same reducer case, so there is nothing here that could disagree.
+          */}
+          <DisclosureRow
+            label="Language"
+            value={LANGUAGE_LABELS[language]}
+            onPress={() => router.push('/language')}
+          />
         </View>
 
         <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>How long it stays</Text>
@@ -185,6 +194,11 @@ const styles = StyleSheet.create({
     marginHorizontal: SECTION_INSET,
     borderRadius: 10,
     overflow: 'hidden',
+  },
+  // Every other card on this screen is spaced by the section header above it.
+  // The first one has none, so it carries the same gap itself.
+  firstCard: {
+    marginTop: 24,
   },
   row: {
     minHeight: 44,

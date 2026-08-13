@@ -1,6 +1,5 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
 import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -10,9 +9,16 @@ import { LauncherStoreProvider, useTheme } from '@/store/LauncherStore';
 /**
  * Cold-launching straight into the relay would otherwise leave `open` as the
  * only route in the stack: a blank transparent screen with nothing underneath
- * and no back entry. Anchoring the stack to `index` puts the app list below the
+ * and no back entry. Anchoring the stack to `index` puts the hub below the
  * relay, so a widget tap on a cold start looks exactly like a widget tap on a
- * warm one, and matches the Swift app, which always showed the list.
+ * warm one.
+ *
+ * `index` used to BE the app list, which is what made the anchor match the
+ * Swift app. The list lives at `/apps` now and the anchor deliberately did not
+ * follow it: the anchor is what the user is left standing on after dismissing
+ * the relay, and that has to be the root of the app, not one section of it.
+ * Nothing about the relay changes -- the cover window sits above everything
+ * React Native paints, so the round trip stays invisible either way.
  */
 export const unstable_settings = { anchor: 'index' };
 
@@ -44,10 +50,11 @@ export const unstable_settings = { anchor: 'index' };
  * `keyboardAppearance` on every TextInput in the app.
  *
  * Note what is NOT here: `theme.backgroundColor` is deliberately never painted
- * on the list. In the original only the widget preview card painted it; the
- * list sat on the standard system List background and got its darkness purely
- * from the color scheme. Painting it here would be visibly wrong -- grouped-list
- * insets and separators would lose their contrast against the page.
+ * on any screen of the app -- not the hub, not the list, not a section. In the
+ * original only the widget preview card painted it; everything else sat on the
+ * standard system background and got its darkness purely from the color scheme.
+ * Painting it here would be visibly wrong -- grouped-list insets and separators
+ * would lose their contrast against the page.
  */
 function ThemedNavigation() {
   const theme = useTheme();
@@ -58,7 +65,7 @@ function ThemedNavigation() {
       <Stack>
         <Stack.Screen
           name="index"
-          options={{ title: 'TSP - The Simple Phone', headerLargeTitleEnabled: true }}
+          options={{ title: 'TSP', headerLargeTitleEnabled: true }}
         />
         {/*
           `presentation: 'modal'` belongs on the PARENT screen, not only on the

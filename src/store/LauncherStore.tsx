@@ -5,8 +5,15 @@ import type { ReactNode } from 'react';
 import { consumeQuotesUpgrade, loadConfig, saveConfig } from './configStore';
 
 import { BUNDLED_QUOTES } from '@/domain/quotes';
-import type { QuoteDuration, QuoteLanguage } from '@/domain/quotes';
-import type { LauncherApp, LauncherConfig, Theme } from '@/domain/types';
+import type { QuoteDuration } from '@/domain/quotes';
+import type {
+  AppLanguage,
+  LauncherApp,
+  LauncherConfig,
+  TemperatureUnit,
+  Theme,
+  WeatherPlace,
+} from '@/domain/types';
 
 /**
  * The single source of truth for the whole app, mirroring the one
@@ -27,12 +34,23 @@ export interface LauncherStore {
   /** Merges the given fields into the current theme and rebuilds the whole Theme. */
   updateTheme(patch: Partial<Theme>): void;
   setQuotesEnabled(enabled: boolean): void;
-  /** Reseeds from the new language's bundle, KEEPING anything the user wrote. */
-  setQuoteLanguage(language: QuoteLanguage): void;
   setQuoteDuration(duration: QuoteDuration): void;
   /** Trims, ignores empty, ignores an exact duplicate, appends to the END. */
   addQuote(text: string): void;
   removeQuoteAt(index: number): void;
+  /**
+   * The app's one language setting. Sets `config.language` AND reseeds the
+   * phrases from the new language's bundle, KEEPING anything the user wrote.
+   *
+   * This replaces the old `setQuoteLanguage`. There is exactly one writer for
+   * the two copies of the value, which is the only thing that makes keeping a
+   * mirror inside `quotes` safe.
+   */
+  setLanguage(language: AppLanguage): void;
+  setWeatherEnabled(enabled: boolean): void;
+  /** The three place fields move together; there is no way to set half a location. */
+  setWeatherPlace(place: WeatherPlace): void;
+  setTemperatureUnit(unit: TemperatureUnit): void;
 }
 
 type Action =
@@ -43,10 +61,13 @@ type Action =
   | { type: 'move'; from: number; to: number }
   | { type: 'updateTheme'; patch: Partial<Theme> }
   | { type: 'setQuotesEnabled'; enabled: boolean }
-  | { type: 'setQuoteLanguage'; language: QuoteLanguage }
   | { type: 'setQuoteDuration'; duration: QuoteDuration }
   | { type: 'addQuote'; text: string }
-  | { type: 'removeQuoteAt'; index: number };
+  | { type: 'removeQuoteAt'; index: number }
+  | { type: 'setLanguage'; language: AppLanguage }
+  | { type: 'setWeatherEnabled'; enabled: boolean }
+  | { type: 'setWeatherPlace'; place: WeatherPlace }
+  | { type: 'setTemperatureUnit'; unit: TemperatureUnit };
 
 /**
  * Returning the SAME object reference means "nothing happened". The persistence
@@ -101,8 +122,12 @@ function reduce(state: LauncherConfig, action: Action): LauncherConfig {
       if (state.quotes.enabled === action.enabled) return state;
       return { ...state, quotes: { ...state.quotes, enabled: action.enabled } };
 
-    case 'setQuoteLanguage': {
-      if (state.quotes.language === action.language) return state;
+    case 'setLanguage': {
+      const { language } = action;
+      // Both copies have to be checked. If only the mirror were stale, skipping
+      // the update here would leave the phrase screen and the weather widget
+      // reading different languages until the user changed something else.
+      if (state.language === language && state.quotes.language === language) return state;
       // Anything not in the OLD bundle is the user's own writing, so it
       // survives the switch. Without this, changing language once would throw
       // away every line they added, silently, with no undo.
@@ -110,13 +135,43 @@ function reduce(state: LauncherConfig, action: Action): LauncherConfig {
       const written = state.quotes.items.filter((item) => !previous.has(item));
       return {
         ...state,
+        language,
         quotes: {
           ...state.quotes,
-          language: action.language,
-          items: [...BUNDLED_QUOTES[action.language], ...written],
+          language,
+          items: [...BUNDLED_QUOTES[language], ...written],
         },
       };
     }
+
+    case 'setWeatherEnabled':
+      if (state.weather.enabled === action.enabled) return state;
+      return { ...state, weather: { ...state.weather, enabled: action.enabled } };
+
+    case 'setWeatherPlace': {
+      const { place } = action;
+      const { weather } = state;
+      if (
+        weather.latitude === place.latitude &&
+        weather.longitude === place.longitude &&
+        weather.placeName === place.placeName
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        weather: {
+          ...weather,
+          latitude: place.latitude,
+          longitude: place.longitude,
+          placeName: place.placeName,
+        },
+      };
+    }
+
+    case 'setTemperatureUnit':
+      if (state.weather.unit === action.unit) return state;
+      return { ...state, weather: { ...state.weather, unit: action.unit } };
 
     case 'setQuoteDuration':
       if (state.quotes.duration === action.duration) return state;
@@ -207,9 +262,6 @@ export function LauncherStoreProvider({ children }: { children: ReactNode }) {
       setQuotesEnabled(enabled) {
         dispatch({ type: 'setQuotesEnabled', enabled });
       },
-      setQuoteLanguage(language) {
-        dispatch({ type: 'setQuoteLanguage', language });
-      },
       setQuoteDuration(duration) {
         dispatch({ type: 'setQuoteDuration', duration });
       },
@@ -218,6 +270,18 @@ export function LauncherStoreProvider({ children }: { children: ReactNode }) {
       },
       removeQuoteAt(index) {
         dispatch({ type: 'removeQuoteAt', index });
+      },
+      setLanguage(language) {
+        dispatch({ type: 'setLanguage', language });
+      },
+      setWeatherEnabled(enabled) {
+        dispatch({ type: 'setWeatherEnabled', enabled });
+      },
+      setWeatherPlace(place) {
+        dispatch({ type: 'setWeatherPlace', place });
+      },
+      setTemperatureUnit(unit) {
+        dispatch({ type: 'setTemperatureUnit', unit });
       },
     }),
     [config]

@@ -5,5 +5,6 @@ import SwiftUI
 struct SimplePhoneWidgetBundle: WidgetBundle {
     var body: some Widget {
         LauncherWidget()
+        WeatherWidget()
     }
 }

@@ -140,5 +140,32 @@ public class LauncherNativeModule: Module {
       // are not guaranteed API — hence the fallback table on the JS side.
       return UIFont(descriptor: descriptor, size: 17).familyName
     }
+
+    /// The phone's top language preference, as a BCP-47 tag.
+    ///
+    /// `Locale.preferredLanguages` is the ordered list from Settings, not the
+    /// app's resolved locale, which is what we want: the app ships no
+    /// localizations, so `Locale.current` would report whatever the bundle
+    /// happens to fall back to, while this reports what the person actually
+    /// chose. The caller only looks at the language subtag, so the region
+    /// suffix ('pt-BR' vs 'pt-PT') is passed through untouched.
+    ///
+    /// Read once, to seed `config.language`. After that the config owns the
+    /// value, so changing the phone's language does not rewrite a choice the
+    /// user made deliberately.
+    Function("preferredLanguage") { () -> String in
+      Locale.preferredLanguages.first ?? "en"
+    }
+
+    /// Whether this region measures in metric, which here means Celsius.
+    ///
+    /// `measurementSystem` (iOS 16+, and the deployment target is 16.4) has
+    /// three cases: `.metric`, `.us` and `.uk`. Comparing against `.us` rather
+    /// than for `.metric` is deliberate — the UK is its own system but reports
+    /// temperature in Celsius, so it belongs on the metric side of this
+    /// particular question.
+    Function("prefersMetric") { () -> Bool in
+      Locale.current.measurementSystem != .us
+    }
   }
 }

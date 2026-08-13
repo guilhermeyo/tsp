@@ -19,10 +19,32 @@ export type RowAlignment = 'leading' | 'center' | 'trailing';
 /** Mirrors `TextSize` in ios/SimplePhoneWidget/Theme.swift. `extraLarge` is camelCase in Swift too. */
 export type TextSize = 'small' | 'medium' | 'large' | 'extraLarge';
 
+/**
+ * The language of everything the user reads: the bundled phrases here, and the
+ * weekday abbreviations the weather widget renders over in Swift.
+ *
+ * Same two values as `QuoteLanguage` in ./quotes, deliberately restated rather
+ * than aliased. Language stopped being a property of the phrase catalog the
+ * moment another process started rendering text with it, so it belongs to the
+ * config; `quotes.language` survives only as a mirror of this one.
+ *
+ * A CONCRETE tag, never 'system'. Resolving 'system' would need two independent
+ * resolvers — this side picking a phrase catalog, Swift picking weekday names —
+ * and they would disagree the instant the phone's language changed, giving
+ * Portuguese weekdays over an English phrase. The system locale is read once,
+ * on first run, and stored as one of these.
+ */
+export type AppLanguage = 'pt-BR' | 'en';
+
+/** Mirrors `TemperatureUnit` in ios/SimplePhoneWidget/WeatherSettings.swift. */
+export type TemperatureUnit = 'celsius' | 'fahrenheit';
+
 /** Every case, in the order Swift's `CaseIterable` yields them (declaration order). */
 export const FONT_CHOICES: readonly FontChoice[] = ['monospaced', 'system', 'rounded', 'serif'];
 export const ROW_ALIGNMENTS: readonly RowAlignment[] = ['leading', 'center', 'trailing'];
 export const TEXT_SIZES: readonly TextSize[] = ['small', 'medium', 'large', 'extraLarge'];
+export const APP_LANGUAGES: readonly AppLanguage[] = ['pt-BR', 'en'];
+export const TEMPERATURE_UNITS: readonly TemperatureUnit[] = ['celsius', 'fahrenheit'];
 
 /**
  * One launchable row. `id` is a UUID string: Swift encodes `UUID` as an
@@ -61,11 +83,45 @@ export interface Quotes {
   items: string[];
 }
 
+/**
+ * A place the forecast can be fetched for. The three fields always travel
+ * together: coordinates with no name render a nameless column, and a name with
+ * no coordinates cannot be fetched.
+ */
+export interface WeatherPlace {
+  latitude: number;
+  longitude: number;
+  placeName: string;
+}
+
+/**
+ * Mirrors `WeatherSettings` in ios/SimplePhoneWidget/WeatherSettings.swift.
+ *
+ * Coordinates are nullable because "no city chosen yet" is a real state that
+ * has to survive a round trip through JSON. `null` decodes to Swift's `nil`;
+ * an absent key would too, but writing all five fields every time keeps the
+ * payload's shape decided in one place (see `serialize`).
+ *
+ * The unit is a resolved 'celsius' | 'fahrenheit', never 'system', for the same
+ * reason `quotes.durationMs` is a resolved number: JS owns the exact bytes and
+ * the native side never needs a resolver table.
+ */
+export interface Weather {
+  enabled: boolean;
+  latitude: number | null;
+  longitude: number | null;
+  placeName: string;
+  unit: TemperatureUnit;
+}
+
 /** The single serialized unit of shared state. Mirrors `LauncherConfig`. */
 export interface LauncherConfig {
   apps: LauncherApp[];
   theme: Theme;
   quotes: Quotes;
+  weather: Weather;
+  /** Authoritative. `quotes.language` is a mirror written by the same reducer case. */
+  language: AppLanguage;
 }
 
 /** Mirrors `Theme.default`. Also the per-field fallback for resilient decoding. */
@@ -87,6 +143,29 @@ export const DEFAULT_QUOTES: Quotes = {
   language: 'pt-BR',
   duration: 'instant',
   items: [],
+};
+
+/**
+ * Mirrors `WeatherSettings.default`. Also the per-field fallback for resilient
+ * decoding.
+ *
+ * `enabled` starts true and the place starts EMPTY, which reads backwards until
+ * you see the widget: there is no default city here on purpose. A widget that
+ * says Sao Paulo to someone in Lisbon is worse than one that asks to be
+ * configured, and the widget already knows how to say so. The compiled-in
+ * `WeatherSettings.fallbackPlace` on the Swift side is a different thing: it
+ * covers the case where the App Group does not share and the widget can see no
+ * config at all.
+ *
+ * `unit` is only the fallback. First run seeds it from the system through
+ * `resolveInitialUnit()`.
+ */
+export const DEFAULT_WEATHER: Weather = {
+  enabled: true,
+  latitude: null,
+  longitude: null,
+  placeName: '',
+  unit: 'celsius',
 };
 
 /** Mirrors `FontChoice.label`. */
@@ -112,6 +191,17 @@ export const SIZE_LABELS: Record<TextSize, string> = {
   extraLarge: 'Extra Large',
 };
 
+/** Shown in the language itself, not translated. */
+export const LANGUAGE_LABELS: Record<AppLanguage, string> = {
+  'pt-BR': 'Português',
+  en: 'English',
+};
+
+export const TEMPERATURE_UNIT_LABELS: Record<TemperatureUnit, string> = {
+  celsius: 'Celsius',
+  fahrenheit: 'Fahrenheit',
+};
+
 export function isFontChoice(value: unknown): value is FontChoice {
   return typeof value === 'string' && (FONT_CHOICES as readonly string[]).includes(value);
 }
@@ -122,4 +212,12 @@ export function isRowAlignment(value: unknown): value is RowAlignment {
 
 export function isTextSize(value: unknown): value is TextSize {
   return typeof value === 'string' && (TEXT_SIZES as readonly string[]).includes(value);
+}
+
+export function isAppLanguage(value: unknown): value is AppLanguage {
+  return typeof value === 'string' && (APP_LANGUAGES as readonly string[]).includes(value);
+}
+
+export function isTemperatureUnit(value: unknown): value is TemperatureUnit {
+  return typeof value === 'string' && (TEMPERATURE_UNITS as readonly string[]).includes(value);
 }

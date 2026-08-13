@@ -132,12 +132,28 @@ struct Theme: Codable, Equatable {
 
     // Resilient decoding: older saved configs (before alignment/size existed) still
     // decode, falling back to defaults instead of wiping the whole LauncherConfig.
+    //
+    // The three enum fields use `try?` rather than `decodeIfPresent`, and the
+    // difference is not stylistic. `decodeIfPresent` returns nil only for an
+    // ABSENT or NULL key — for a raw value no case matches it THROWS
+    // `dataCorrupted`, and that throw escapes this init, gets swallowed by
+    // `try?` in `ConfigStore.load()`, and resets the whole config. Which means
+    // that with `decodeIfPresent` here, the day any of these enums gains a case
+    // (a new font, say) is the day every older build wipes the user's app list
+    // on first read of a config written by a newer one. Nothing about the
+    // change would look dangerous.
+    //
+    // `isDark` keeps `decodeIfPresent` because it is the documented canary for
+    // failure mode #1 in AGENTS.md: if config ever crosses as a bridged object,
+    // a JS `true` arrives as `1` and this line throws. `LauncherConfig` now
+    // catches that throw and keeps the apps, so the cost is a wrong theme
+    // rather than lost data.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         isDark = try c.decodeIfPresent(Bool.self, forKey: .isDark) ?? true
-        font = try c.decodeIfPresent(FontChoice.self, forKey: .font) ?? .monospaced
-        alignment = try c.decodeIfPresent(RowAlignment.self, forKey: .alignment) ?? .center
-        size = try c.decodeIfPresent(TextSize.self, forKey: .size) ?? .large
+        font = (try? c.decode(FontChoice.self, forKey: .font)) ?? .monospaced
+        alignment = (try? c.decode(RowAlignment.self, forKey: .alignment)) ?? .center
+        size = (try? c.decode(TextSize.self, forKey: .size)) ?? .large
     }
 
     var colorScheme: ColorScheme { isDark ? .dark : .light }

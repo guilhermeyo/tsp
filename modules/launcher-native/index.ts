@@ -23,7 +23,7 @@
  *     public way to turn SwiftUI's `Font.Design` into a family name React
  *     Native can render, and nothing off the shelf exposes it.
  *
- * All four functions are declared with Expo's `Function` (not `AsyncFunction`),
+ * Every function is declared with Expo's `Function` (not `AsyncFunction`),
  * so they are installed as synchronous JSI functions and return values
  * directly. The store can therefore load the config during render, matching
  * the old synchronous `LauncherStore.init` -> `ConfigStore.load()`.
@@ -56,6 +56,24 @@ export interface LauncherNativeModule {
    * anything unrecognised, meaning "use React Native's default".
    */
   resolvedFontFamily(design: string): string | null;
+
+  /**
+   * The phone's top language preference as a BCP-47 tag ('pt-BR', 'en-US',
+   * 'es-419'), or 'en' when the list is somehow empty.
+   *
+   * Read ONCE, on first run, to seed `config.language`. The stored value is a
+   * concrete tag from then on, so changing the phone's language later does not
+   * silently rewrite the phrase catalog of someone who chose the other one.
+   */
+  preferredLanguage(): string;
+
+  /**
+   * Whether the phone's region measures in metric, which for this app means
+   * Celsius. False only for the United States.
+   *
+   * Also read once, to seed `weather.unit`.
+   */
+  prefersMetric(): boolean;
 }
 
 export const LauncherNative = requireNativeModule<LauncherNativeModule>('LauncherNative');
