@@ -42,37 +42,48 @@ private enum Relay {
   static func handle(_ url: URL, window: UIWindow?) -> Bool {
     guard let target = target(from: url) else { return false }
 
-    // Async on the main queue because this also runs during
+    // BOTH of these are synchronous, before any main-queue hop, and that is the
+    // point. `beginRelay` closes the window in which a `didBecomeActive` could
+    // tear the cover down, and the cover itself is up before this callout
+    // returns -- painted by UIKit over the launch image on a cold start, with
+    // React Native still booting behind it. Doing any of it in JavaScript would
+    // have meant waiting out the whole cold start before the user saw a word.
+    QuoteScreen.beginRelay()
+    let hold = QuoteScreen.cover(in: window)
+
+    // The OPEN is what waits a runloop turn: this also runs during
     // `didFinishLaunchingWithOptions`, where opening synchronously is too early
     // for LaunchServices.
     DispatchQueue.main.async {
-      // The phrase is on screen NOW, painted by UIKit over the launch image,
-      // with React Native still booting behind it. Doing this in JavaScript
-      // would have meant waiting out the whole cold start before the user saw
-      // a single word. The hold comes from the user's own setting.
-      guard let hold = QuoteScreen.present(in: window) else {
-        open(target, window: window)
-        return
-      }
-      // A zero hold opens NOW, in this same pass. The phrase has already been
-      // forced to draw, so it covers the handoff without adding a millisecond
-      // to it. Scheduling even a zero-delay timer would cost a runloop turn for
-      // nothing.
-      guard hold > 0 else {
-        open(target, window: window)
-        return
-      }
-      DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
-        open(target, window: window)
+      // "Instant" means the moment the cover is actually on screen, not zero.
+      // On a warm relay the cover has been up since the last backgrounding, so
+      // `afterPresented` fires immediately and there is no wait at all.
+      QuoteScreen.afterPresented {
+        guard hold > 0 else {
+          open(target, window: window)
+          return
+        }
+        // The hold is timed from the frame, not from before it, so the number
+        // the user picked is the number of seconds they actually get.
+        DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
+          open(target, window: window)
+        }
       }
     }
     return true
   }
 
   private static func open(_ target: URL, window: UIWindow?) {
-    QuoteScreen.releaseHold()
+    // No `releaseHold` here. The relay is released when the app has actually
+    // LEFT (`didEnterBackground`), or below when the open failed. Releasing at
+    // the call site left the handoff itself unguarded, so an activation landing
+    // mid-handoff could pull the cover down and show the list.
     UIApplication.shared.open(target, options: [:]) { success in
       guard !success else { return }
+      // The app is staying put, so the cover has to come down: it is above the
+      // window the alert is presented into, and nothing else would ever remove
+      // it -- no backgrounding means no foregrounding means no dismiss.
+      QuoteScreen.dismissForFailure()
       presentFailure(target, window: window)
     }
   }
@@ -88,7 +99,7 @@ private enum Relay {
       preferredStyle: .alert)
     alert.addAction(UIAlertAction(title: "OK", style: .default))
 
-    var presenter = window?.rootViewController
+    var presenter = window?.rootViewController ?? QuoteScreen.failurePresenter()
     while let presented = presenter?.presentedViewController {
       presenter = presented
     }
@@ -116,16 +127,31 @@ class AppDelegate: ExpoAppDelegate {
 
 #if os(iOS) || os(tvOS)
     window = UIWindow(frame: UIScreen.main.bounds)
+    QuoteScreen.attach(hostWindow: window)
+
+    // Cold launch FROM a widget tap. `application(_:open:options:)` is not
+    // called in this case -- the URL rides in launchOptions -- so the relay has
+    // to be read here or the target never opens on a cold start.
+    //
+    // BEFORE `startReactNative`, deliberately. Window level is what decides
+    // z-order, so both orders composite correctly, but starting React Native
+    // can spin nested runloop turns in a Debug build (Metro fetch, the dev
+    // loading view, LogBox) and each of those is a chance to commit a frame.
+    // Covering first closes that gap for free.
+    if let url = launchOptions?[.url] as? URL {
+      Relay.handle(url, window: window)
+    }
+
     factory.startReactNative(
       withModuleName: "main",
       in: window,
       launchOptions: launchOptions)
 #endif
 
-    // The phrase window has to come down when the user comes BACK, otherwise a
-    // stale line sits over the app list. Foregrounding is the right moment: it
-    // covers returning from the target app, and it also covers the case where
-    // the target never opened and the alert was shown on top.
+    // The cover has to come down when the user comes BACK, otherwise a stale
+    // line sits over the app list. Foregrounding is the right moment: it covers
+    // returning from the target app, and it also covers the case where the
+    // target never opened. `dismiss` is a no-op while a relay is in flight.
     NotificationCenter.default.addObserver(
       forName: UIApplication.didBecomeActiveNotification,
       object: nil,
@@ -134,11 +160,26 @@ class AppDelegate: ExpoAppDelegate {
       QuoteScreen.dismiss()
     }
 
-    // Cold launch FROM a widget tap. `application(_:open:options:)` is not
-    // called in this case -- the URL rides in launchOptions -- so the relay has
-    // to be read here or the target never opens on a cold start.
-    if let url = launchOptions?[.url] as? URL {
-      Relay.handle(url, window: window)
+    // The other half of the fix, and the half no overlay can do on its own.
+    //
+    // UIKit takes a snapshot of the UI once this callout returns, and iOS
+    // REPLAYS that image for the whole open animation the next time the app is
+    // foregrounded -- before `application(_:open:options:)`, before any of our
+    // code. Whatever was on screen at the last backgrounding is therefore what
+    // the user watches during the next widget tap. Putting the cover up here
+    // makes the snapshot the phrase instead of the app list.
+    //
+    // No animation is started, per QA1838: the snapshot is taken immediately
+    // and would catch a half-finished one.
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      // Leaving IS the successful end of a relay. Released here rather than at
+      // the `open` call so the guard covers the handoff itself.
+      QuoteScreen.endRelay()
+      QuoteScreen.cover(forSnapshot: true)
     }
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)

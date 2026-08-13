@@ -60,6 +60,21 @@ function defaultConfig(): LauncherConfig {
  */
 let didSynthesizeQuotes = false;
 
+/**
+ * Every "there is nothing usable on disk" exit of `loadConfig`.
+ *
+ * These used to return `defaultConfig()` directly, which meant a fresh install
+ * held a perfectly good config in memory and wrote NOTHING to the shared
+ * container until the user happened to edit something. The App Group stayed
+ * empty, the widget rendered `BundledDefaults`, and the native relay found no
+ * phrase. Marking the synthesis here is what makes the provider write the seed
+ * on mount.
+ */
+function synthesizedConfig(): LauncherConfig {
+  didSynthesizeQuotes = true;
+  return defaultConfig();
+}
+
 /** Reads and clears. Only the first caller after a load gets `true`. */
 export function consumeQuotesUpgrade(): boolean {
   const value = didSynthesizeQuotes;
@@ -139,22 +154,22 @@ export function loadConfig(): LauncherConfig {
   try {
     raw = LauncherNative.readConfigJSON();
   } catch {
-    return defaultConfig();
+    return synthesizedConfig();
   }
-  if (raw === null || raw.length === 0) return defaultConfig();
+  if (raw === null || raw.length === 0) return synthesizedConfig();
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return defaultConfig();
+    return synthesizedConfig();
   }
-  if (!isRecord(parsed)) return defaultConfig();
+  if (!isRecord(parsed)) return synthesizedConfig();
 
   const apps = decodeApps(parsed.apps);
   // An absent or non-array `apps` is not a config at all. Swift's synthesized
   // decoder fails the same way, and `.default` is what the user then sees.
-  if (apps === null) return defaultConfig();
+  if (apps === null) return synthesizedConfig();
 
   return { apps, theme: decodeTheme(parsed.theme), quotes: decodeQuotes(parsed.quotes) };
 }
