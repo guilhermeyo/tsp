@@ -47,6 +47,17 @@ export interface LauncherNativeModule {
    */
   writeConfigJSON(json: string): void;
 
+  /**
+   * Phrase counters as raw JSON, `{"counts":{"<phrase>":<int>},"current":"..."}`,
+   * or null before the first backgrounding of a fresh install.
+   *
+   * Read only, by design. `QuoteScreen.swift` in the app target is the sole
+   * writer of that key, the mirror of `launcher_config`, whose sole writer is
+   * this side. Do not add a write: it would put a second writer on the JS
+   * thread against increments that happen on the main thread.
+   */
+  readQuoteStatsJSON(): string | null;
+
   /** Invalidates the widget's timeline so WidgetKit re-renders it. */
   reloadWidget(): void;
 

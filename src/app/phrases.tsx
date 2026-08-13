@@ -1,7 +1,8 @@
 import { Stack, useRouter, useTheme as useNavigationTheme } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
+  AppState,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,6 +18,7 @@ import {
   QUOTE_DURATION_LABEL,
   QUOTE_DURATION_MS,
 } from '@/domain/quotes';
+import { countNeverShown, parseQuoteCounts, readQuoteStatsJSON } from '@/domain/quoteStats';
 import { LANGUAGE_LABELS } from '@/domain/types';
 import { useLauncherStore } from '@/store/LauncherStore';
 import { fontFamilyFor } from '@/theme/fonts';
@@ -43,7 +45,25 @@ export default function PhrasesScreen() {
   const { colors } = useNavigationTheme();
   const [draft, setDraft] = useState('');
 
+  // Seeded synchronously, the same trick the store uses with useReducer: the
+  // native read is a JSI Function, so the first render already has the real
+  // numbers. No loading flag, no flash of blanks.
+  const [rawStats, setRawStats] = useState(readQuoteStatsJSON);
+  const counts = useMemo(() => parseQuoteCounts(rawStats), [rawStats]);
+
+  useEffect(() => {
+    // A count can only change while the app is in the BACKGROUND, because that
+    // is the one place a phrase is drawn. So there is nothing to poll and
+    // nothing to subscribe to, and re-reading on every return covers the only
+    // stale case there is: this screen open, app switcher, back to this screen.
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') setRawStats(readQuoteStatsJSON());
+    });
+    return () => subscription.remove();
+  }, []);
+
   const secondaryLabel = theme.isDark ? '#EBEBF599' : '#3C3C4399';
+  const neverShown = countNeverShown(quotes.items, counts);
   const trimmed = draft.trim();
   const canAdd = trimmed !== '' && !quotes.items.includes(trimmed);
 
@@ -145,8 +165,16 @@ export default function PhrasesScreen() {
           </View>
         </View>
 
+        {/*
+          The count beside each line is how many times it has been put up as a
+          cover. "Not yet shown" is the spread statistic, and it is the one the
+          native draw minimises: it walks down to zero over a cycle, at which
+          point this header reads exactly as it did before any of this existed.
+        */}
         <Text style={[styles.sectionHeader, { color: secondaryLabel }]}>
-          {`${quotes.items.length} in rotation`}
+          {neverShown === 0
+            ? `${quotes.items.length} in rotation`
+            : `${quotes.items.length} in rotation, ${neverShown} not yet shown`}
         </Text>
 
         <View style={[styles.card, { backgroundColor: colors.card }]}>
@@ -163,6 +191,21 @@ export default function PhrasesScreen() {
                   ]}
                 >
                   {item}
+                </Text>
+                {/*
+                  Fixed width and right aligned so the minus buttons stay in one
+                  straight line down the card whatever the numbers are, with
+                  tabular figures so the digits do not jitter as a count crosses
+                  into three. Zero renders blank but still holds the slot, so
+                  nothing shifts the first time a number lands.
+                */}
+                <Text
+                  style={[styles.count, { color: secondaryLabel }]}
+                  accessibilityLabel={
+                    counts[item] === undefined ? 'Not yet shown' : `Shown ${counts[item]} times`
+                  }
+                >
+                  {counts[item] === undefined ? '' : String(counts[item])}
                 </Text>
                 <Pressable
                   onPress={() => store.removeQuoteAt(index)}
@@ -223,6 +266,12 @@ const styles = StyleSheet.create({
   quote: {
     fontSize: 15,
     flexShrink: 1,
+  },
+  count: {
+    fontSize: 15,
+    minWidth: 32,
+    textAlign: 'right',
+    fontVariant: ['tabular-nums'],
   },
   input: {
     flex: 1,

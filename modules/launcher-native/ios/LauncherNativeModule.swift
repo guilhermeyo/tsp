@@ -10,6 +10,12 @@ import UIKit
 private let appGroupId = "group.com.guilherme44.simple-phone"
 private let configKey = "launcher_config"
 
+// The phrase counters. Written ONLY by ios/SimplePhone/QuoteScreen.swift, where
+// the other copy of this string lives, and only ever read here. Same duplication
+// hazard as the two above: nothing enforces agreement, and a drift shows up as
+// counters frozen at zero with no error anywhere.
+private let quoteStatsKey = "quote_stats"
+
 /// The one UserDefaults suite the app and the widget share.
 ///
 /// An App Group is a container the system hands to every process signed with
@@ -90,6 +96,32 @@ public class LauncherNativeModule: Module {
       // No `synchronize()`: it has been a no-op-ish legacy call since iOS 12.
       // UserDefaults flushes on its own, and the widget reload below is
       // scheduled by the system after this turn of the run loop anyway.
+    }
+
+    /// How many times each phrase has been put up as a relay cover, plus the
+    /// one the last snapshot carries.
+    ///
+    /// READ ONLY, and it stays that way. `QuoteScreen` in the app target is the
+    /// sole writer of this key, the exact mirror of `launcher_config`, whose
+    /// sole writer is JS. One writer per key is what makes both safe with no
+    /// locking anywhere: `QuoteScreen` touches it only from
+    /// `didEnterBackground` and from the URL callout, both main-thread, so even
+    /// a burst of rapid relays serialises into sequential read-modify-writes on
+    /// the run loop. Adding a write here — a "reset counts" button, say — would
+    /// introduce a second writer on the JS thread and would have to hop to main.
+    ///
+    /// Returns `{"counts":{"<phrase>":<int>},"current":"..."}`, or nil before
+    /// the first backgrounding of a fresh install. A String rather than a
+    /// bridged dictionary for the same reason `writeConfigJSON` takes one: this
+    /// boundary is stringly typed everywhere or it is nowhere.
+    Function("readQuoteStatsJSON") { () -> String? in
+      let defaults = sharedDefaults()
+
+      if let data = defaults.data(forKey: quoteStatsKey) {
+        return String(data: data, encoding: .utf8)
+      }
+
+      return defaults.string(forKey: quoteStatsKey)
     }
 
     /// Tells WidgetKit that the timeline is stale.
