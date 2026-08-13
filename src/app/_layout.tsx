@@ -2,7 +2,7 @@ import * as Linking from 'expo-linking';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { StyleSheet } from 'react-native';
+import { Alert, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -41,12 +41,20 @@ function relayDeepLink(url: string): void {
   const target = parseTarget(url);
   if (target === null) return;
 
-  // `UIApplication.shared.open(target)` with a completion handler that ignores
-  // `success == false`. If the target app is not installed, the old app showed
-  // no alert, no toast and no App Store fallback -- it opened, showed the list
-  // and sat there. The empty catch reproduces that. It is a known gap carrying
-  // a TODO in the original, not a bug to accidentally fix.
-  Linking.openURL(target).catch(() => {});
+  // The original swallowed `success == false` here: tap a row for an app you do
+  // not have and Simple Phone opened, showed the list and sat there. That was a
+  // TODO in the Swift, and it is the single most expensive thing about this
+  // app's UX -- a tap that does nothing is indistinguishable from a tap that
+  // opened the WRONG app, from a scheme Apple changed under you, from a typo.
+  // Diagnosing any of those costs an evening. So failure talks now.
+  Linking.openURL(target).catch(() => {
+    Alert.alert(
+      'Could not open this',
+      `iOS refused to open:\n\n${target}\n\n` +
+        'Either no installed app handles it, or the scheme changed. Edit the row ' +
+        'and use Test to try another URL.'
+    );
+  });
 }
 
 /**

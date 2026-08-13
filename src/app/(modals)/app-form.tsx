@@ -1,6 +1,7 @@
+import * as Linking from 'expo-linking';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 // The catalog owns the hand-back channel and documents it in its own header.
 // It is a module-scope single-listener slot rather than a router return param,
@@ -155,6 +156,39 @@ export default function AppFormScreen() {
             onPress={() => router.push('/(modals)/catalog')}
           >
             <Text style={[styles.rowLabel, { color: colors.tint }]}>Choose from catalog</Text>
+          </Pressable>
+          <View style={[styles.separator, { backgroundColor: colors.separator }]} />
+          {/*
+            Tapping a row in the LIST opens this form, so before this button the
+            only way to find out whether a URL actually worked was to put the
+            widget on a home screen and tap it there. That is a terrible loop for
+            the one thing about this app that is genuinely trial and error: a URL
+            scheme names a protocol, not an app, so whether a given string opens
+            the app you meant is an empirical question about THIS phone.
+          */}
+          <Pressable
+            style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.pressed }]}
+            disabled={urlString.trim().length === 0}
+            onPress={() => {
+              const target = urlString.trim();
+              Linking.openURL(target).catch(() => {
+                Alert.alert(
+                  'Could not open this',
+                  `iOS refused to open:\n\n${target}\n\n` +
+                    'No installed app handles it. If the app IS installed, its scheme ' +
+                    'changed, or another app claimed the same one.'
+                );
+              });
+            }}
+          >
+            <Text
+              style={[
+                styles.rowLabel,
+                { color: urlString.trim().length === 0 ? colors.disabled : colors.tint },
+              ]}
+            >
+              Test this URL
+            </Text>
           </Pressable>
         </View>
 
