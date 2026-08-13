@@ -65,7 +65,7 @@ function ThemedNavigation() {
       <Stack>
         <Stack.Screen
           name="index"
-          options={{ title: 'TSP', headerLargeTitleEnabled: true }}
+          options={{ title: 'The Simple Phone', headerLargeTitleEnabled: true }}
         />
         {/*
           `presentation: 'modal'` belongs on the PARENT screen, not only on the

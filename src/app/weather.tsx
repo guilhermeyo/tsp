@@ -14,7 +14,8 @@ import {
 } from 'react-native';
 
 import { SegmentedControl } from '@/components/SegmentedControl';
-import { searchPlaces, type GeocodingPlace } from '@/domain/geocoding';
+import { WeatherPreviewCard } from '@/components/WeatherPreviewCard';
+import { guessPlaceFromNetwork, searchPlaces, type GeocodingPlace } from '@/domain/geocoding';
 import {
   LANGUAGE_LABELS,
   TEMPERATURE_UNITS,
@@ -72,6 +73,8 @@ export default function WeatherScreen() {
   const tertiaryLabel = theme.isDark ? 'rgba(235, 235, 245, 0.3)' : 'rgba(60, 60, 67, 0.3)';
 
   const [query, setQuery] = useState('');
+  /** Guards the one-shot seed below against Fast Refresh and remounts. */
+  const seeded = useRef(false);
   const [search, setSearch] = useState<SearchState>({ status: 'idle' });
 
   /**
@@ -108,6 +111,32 @@ export default function WeatherScreen() {
     return () => clearTimeout(timer);
   }, [query, language]);
 
+  /**
+   * Seed a city the first time this screen is opened with none set.
+   *
+   * An IP lookup, deliberately, not CoreLocation: it lands within tens of
+   * kilometres, which is the right accuracy for a five-day forecast, and it
+   * costs no permission prompt in an app whose pitch is that it asks for
+   * nothing. Silent on failure, because the fallback is the search field that
+   * is already on screen.
+   */
+  useEffect(() => {
+    if (seeded.current || weather.placeName !== '') return;
+    seeded.current = true;
+    let cancelled = false;
+    guessPlaceFromNetwork().then((place) => {
+      if (cancelled || place === null) return;
+      store.setWeatherPlace({
+        latitude: roundCoordinate(place.latitude),
+        longitude: roundCoordinate(place.longitude),
+        placeName: place.name,
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [weather.placeName, store]);
+
   function choose(place: GeocodingPlace): void {
     store.setWeatherPlace({
       latitude: roundCoordinate(place.latitude),
@@ -134,6 +163,15 @@ export default function WeatherScreen() {
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
       >
+        {/*
+          The preview sits ABOVE the controls, so choosing a city or flipping
+          the unit shows its result in place instead of sending the user to the
+          home screen to find out.
+        */}
+        <View style={styles.previewRow}>
+          <WeatherPreviewCard weather={weather} theme={theme} language={language} />
+        </View>
+
         <View style={[styles.card, { backgroundColor: colors.card }]}>
           <View style={styles.row}>
             <Text style={[styles.rowLabel, { color: colors.text }]}>Show weather widget</Text>
@@ -295,6 +333,10 @@ export default function WeatherScreen() {
 }
 
 const styles = StyleSheet.create({
+  previewRow: {
+    paddingHorizontal: SECTION_INSET + 12,
+    paddingVertical: 12,
+  },
   content: {
     paddingTop: 24,
     paddingBottom: 48,

@@ -137,3 +137,83 @@ function parsePlace(entry: unknown): GeocodingPlace | null {
 
   return { name, latitude, longitude, subtitle: parts.join(', ') };
 }
+
+/**
+ * A city to start from, guessed from the network address.
+ *
+ * The user asked whether the app could just know where they are. It can, near
+ * enough: an IP lookup lands within tens of kilometres, which is the right
+ * accuracy for a five-day forecast and costs NO permission dialog. Real
+ * location would mean CoreLocation, a purpose string, a prompt on first run and
+ * a denied state to design, in an app whose whole pitch is that it asks for
+ * nothing.
+ *
+ * It is a SEED, not a setting. It runs once, when no city has ever been chosen,
+ * and whatever it picks is immediately editable on the same screen. Being 40km
+ * off matters less than the widget having something to show before the user has
+ * typed anything.
+ *
+ * Two providers, both HTTPS and keyless, because the first one this project
+ * tried (ipapi.co) answered 429 from the very first call.
+ */
+const IP_LOOKUPS: readonly {
+  url: string;
+  parse: (json: unknown) => GeocodingPlace | null;
+}[] = [
+  {
+    url: 'https://ipwho.is/',
+    parse: (json) => {
+      if (typeof json !== 'object' || json === null) return null;
+      const d = json as Record<string, unknown>;
+      if (d.success !== true) return null;
+      return toPlace(d.city, d.region, d.country, d.latitude, d.longitude);
+    },
+  },
+  {
+    url: 'https://get.geojs.io/v1/ip/geo.json',
+    parse: (json) => {
+      if (typeof json !== 'object' || json === null) return null;
+      const d = json as Record<string, unknown>;
+      // geojs returns coordinates as STRINGS, unlike ipwho.is.
+      return toPlace(d.city, d.region, d.country, Number(d.latitude), Number(d.longitude));
+    },
+  },
+];
+
+function toPlace(
+  city: unknown,
+  region: unknown,
+  country: unknown,
+  latitude: unknown,
+  longitude: unknown
+): GeocodingPlace | null {
+  if (typeof city !== 'string' || city.trim() === '') return null;
+  if (typeof latitude !== 'number' || !Number.isFinite(latitude)) return null;
+  if (typeof longitude !== 'number' || !Number.isFinite(longitude)) return null;
+  return {
+    name: city.trim(),
+    latitude,
+    longitude,
+    subtitle: [region, country]
+      .filter((part): part is string => typeof part === 'string' && part !== '')
+      .join(', '),
+  };
+}
+
+/** Null on any failure. A missing seed is a city the user types; it is not an error worth reporting. */
+export async function guessPlaceFromNetwork(): Promise<GeocodingPlace | null> {
+  for (const lookup of IP_LOOKUPS) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      const response = await fetch(lookup.url, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!response.ok) continue;
+      const place = lookup.parse(await response.json());
+      if (place !== null) return place;
+    } catch {
+      // Next provider. Offline, blocked, rate limited: all the same here.
+    }
+  }
+  return null;
+}

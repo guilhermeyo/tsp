@@ -50,8 +50,8 @@ struct WeatherWidgetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // `contentMarginsDisabled()` means the system adds none, so these are
         // the widget's only margins.
-        .padding(.horizontal, 12)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 10)
     }
 
     private func column(
@@ -172,10 +172,14 @@ private struct ColumnMetrics {
 
     static func forSize(_ size: TextSize) -> ColumnMetrics {
         switch size {
-        case .small: return ColumnMetrics(weekday: 11, symbol: 17, temperature: 13, spacing: 6)
-        case .medium: return ColumnMetrics(weekday: 12, symbol: 20, temperature: 15, spacing: 7)
-        case .large: return ColumnMetrics(weekday: 13, symbol: 22, temperature: 17, spacing: 8)
-        case .extraLarge: return ColumnMetrics(weekday: 15, symbol: 26, temperature: 19, spacing: 9)
+        // Sized against Apple's own Weather widget sitting directly above ours
+        // on the user's home screen, which is the only comparison that matters.
+        // The first pass was measured from a systemMedium in isolation and read
+        // as timid next to it.
+        case .small: return ColumnMetrics(weekday: 13, symbol: 24, temperature: 17, spacing: 7)
+        case .medium: return ColumnMetrics(weekday: 15, symbol: 28, temperature: 19, spacing: 8)
+        case .large: return ColumnMetrics(weekday: 16, symbol: 31, temperature: 21, spacing: 9)
+        case .extraLarge: return ColumnMetrics(weekday: 18, symbol: 35, temperature: 24, spacing: 10)
         }
     }
 }

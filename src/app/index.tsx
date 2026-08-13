@@ -3,6 +3,7 @@ import { useRouter, useTheme as useNavigationTheme } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { DisclosureRow, ROW_PADDING, SECTION_INSET } from '@/components/DisclosureRow';
+import { WeatherPreviewCard } from '@/components/WeatherPreviewCard';
 import { WidgetPreviewCard } from '@/components/WidgetPreviewCard';
 import { FONT_LABELS, LANGUAGE_LABELS, SIZE_LABELS } from '@/domain/types';
 import { useLauncherStore } from '@/store/LauncherStore';
@@ -71,6 +72,22 @@ export default function HubScreen() {
       >
         <WidgetPreviewCard config={store.config} />
       </Pressable>
+
+      {/*
+        The second widget gets the same treatment as the first: shown, not
+        described. Hidden entirely when it is switched off, because a preview of
+        something the user turned off is just noise.
+      */}
+      {weather.enabled && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Weather"
+          style={styles.previewRow}
+          onPress={() => router.push('/weather')}
+        >
+          <WeatherPreviewCard weather={weather} theme={theme} language={language} />
+        </Pressable>
+      )}
 
       {/* The features. Each one is something the widget or the relay renders. */}
       <View style={[styles.card, { backgroundColor: colors.card }]}>
