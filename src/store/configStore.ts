@@ -2,7 +2,7 @@ import * as Crypto from 'expo-crypto';
 
 import { LauncherNative } from '../../modules/launcher-native';
 
-import { BUNDLED_DEFAULTS } from '@/domain/bundledDefaults';
+import { makeBundledDefaults } from '@/domain/bundledDefaults';
 import { BUNDLED_QUOTES, QUOTE_DURATION_MS, isQuoteDuration } from '@/domain/quotes';
 import {
   DEFAULT_QUOTES,
@@ -76,7 +76,7 @@ function defaultConfig(): LauncherConfig {
   // harmless today and a bug the day it stops being deterministic.
   const language = resolveInitialLanguage();
   return {
-    apps: BUNDLED_DEFAULTS.slice(),
+    apps: makeBundledDefaults(language),
     theme: { ...DEFAULT_THEME },
     quotes: { ...DEFAULT_QUOTES, items: BUNDLED_QUOTES[language].slice() },
     weather: { ...DEFAULT_WEATHER, unit: resolveInitialUnit() },

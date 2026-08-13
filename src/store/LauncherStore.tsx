@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 
 import { consumeQuotesUpgrade, loadConfig, saveConfig } from './configStore';
 
+import { switchLanguageApps } from '@/domain/bundledDefaults';
 import { BUNDLED_QUOTES, switchLanguageItems } from '@/domain/quotes';
 import type { QuoteDuration } from '@/domain/quotes';
 import type {
@@ -142,6 +143,11 @@ function reduce(state: LauncherConfig, action: Action): LauncherConfig {
       return {
         ...state,
         language,
+        // The apps move too: a row still carrying its seeded name is a label
+        // this app wrote, not something the user typed, and a launcher whose
+        // rows do not read the way the home screen reads is a launcher you have
+        // to translate in your head. A renamed row is left alone.
+        apps: switchLanguageApps(state.language, language, state.apps),
         quotes: {
           ...state.quotes,
           items: switchLanguageItems(state.language, language, state.quotes.items),

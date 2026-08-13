@@ -146,9 +146,13 @@ A widget tap can never open a third-party app directly. Never put a third-party 
   commit.
 - **No emojis anywhere.** Not in code, not in UI strings, not in commits, not in docs.
 - **No AI mentions** in code, comments, commits or docs.
-- **English everywhere.** Code, comments, commits, docs. The only exceptions are the five bundled
-  default app names, which are Portuguese because they are user data inherited from the original
-  app, and must stay byte-identical.
+- **English everywhere.** Code, comments, commits, docs.
+- **The bundled default app names are LOCALIZED, not fixed.** They live in
+  `src/domain/bundledDefaults.ts` as a name per language per target, and they use the names Apple
+  itself uses for those apps in each language, because a launcher row that does not read the way the
+  home screen reads has to be translated in the user's head. Switching language renames only a row
+  that still carries the OUTGOING language's default; anything the user renamed is theirs and never
+  moves. The Swift mirror is English only, and the comment there explains why.
 - **Comment WHY, not WHAT.** The native files are teaching material and should be commented
   generously. Obvious TypeScript should not be commented at all.
 - The `?? .standard` fallback in `ConfigStore.swift` and `LauncherNativeModule.swift` is
