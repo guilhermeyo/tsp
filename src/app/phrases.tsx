@@ -41,6 +41,10 @@ export default function PhrasesScreen() {
   const s = useStrings();
   const { colors } = useNavigationTheme();
   const [draft, setDraft] = useState('');
+  /** Optional. Blank means the line has no attribution, which is most of them. */
+  const [author, setAuthor] = useState('');
+  /** null while adding, an index while editing an existing line in place. */
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   // Seeded synchronously, the same trick the store uses with useReducer: the
   // native read is a JSI Function, so the first render already has the real
@@ -62,11 +66,23 @@ export default function PhrasesScreen() {
   const secondaryLabel = theme.isDark ? '#EBEBF599' : '#3C3C4399';
   const neverShown = countNeverShown(quotes.items, counts);
   const trimmed = draft.trim();
-  const canAdd = trimmed !== '' && !quotes.items.includes(trimmed);
+  const trimmedAuthor = author.trim();
+  // Editing keeps its own row out of the duplicate check: re-saving a line
+  // without changing its text must not be refused as a duplicate of itself.
+  const collides = quotes.items.some(
+    (item, i) => i !== editingIndex && item.text === trimmed
+  );
+  const canAdd = trimmed !== '' && !collides;
 
   function add(): void {
     if (!canAdd) return;
-    store.addQuote(trimmed);
+    if (editingIndex === null) {
+      store.addQuote(trimmed, trimmedAuthor);
+    } else {
+      store.updateQuoteAt(editingIndex, trimmed, trimmedAuthor);
+    }
+    setEditingIndex(null);
+    setAuthor('');
     setDraft('');
   }
 
@@ -147,9 +163,41 @@ export default function PhrasesScreen() {
               <Text
                 style={[styles.action, { color: canAdd ? colors.primary : secondaryLabel }]}
               >
-                {s.commonAdd}
+                {editingIndex === null ? s.commonAdd : s.commonSave}
               </Text>
             </Pressable>
+          </View>
+
+          <View style={[styles.separator, { backgroundColor: colors.border }]} />
+
+          {/*
+            Optional, and it looks optional: its own row, its own placeholder,
+            and nothing about the confirm button depends on it. Most lines in
+            this app are original and unattributed.
+          */}
+          <View style={styles.row}>
+            <TextInput
+              value={author}
+              onChangeText={setAuthor}
+              placeholder={s.phrasesAuthorHint}
+              placeholderTextColor={secondaryLabel}
+              style={[styles.input, { color: colors.text }]}
+              keyboardAppearance={theme.isDark ? 'dark' : 'light'}
+              returnKeyType="done"
+              onSubmitEditing={add}
+            />
+            {editingIndex !== null && (
+              <Pressable
+                onPress={() => {
+                  setEditingIndex(null);
+                  setDraft('');
+                  setAuthor('');
+                }}
+                hitSlop={8}
+              >
+                <Text style={[styles.action, { color: secondaryLabel }]}>{s.commonCancel}</Text>
+              </Pressable>
+            )}
           </View>
         </View>
 
@@ -170,7 +218,7 @@ export default function PhrasesScreen() {
             // Read into a local rather than indexing three times: `counts` is
             // keyed by an arbitrary string, which TypeScript will not narrow
             // through an element access, and `a11yShownTimes` takes a number.
-            const count = counts[item];
+            const count = counts[item.text];
 
             return (
               <Fragment key={`${item}-${index}`}>
@@ -178,14 +226,38 @@ export default function PhrasesScreen() {
                   <View style={[styles.separator, { backgroundColor: colors.border }]} />
                 )}
                 <View style={styles.row}>
-                  <Text
-                    style={[
-                      styles.quote,
-                      { color: colors.text, fontFamily: fontFamilyFor(theme.font) },
-                    ]}
+                  {/*
+                    Tapping loads the line into the form above instead of
+                    opening a sheet: the form is already on this screen, and a
+                    modal for two fields would be more chrome than content.
+                  */}
+                  <Pressable
+                    style={styles.quoteBlock}
+                    onPress={() => {
+                      setEditingIndex(index);
+                      setDraft(item.text);
+                      setAuthor(item.author ?? '');
+                    }}
                   >
-                    {item}
-                  </Text>
+                    <Text
+                      style={[
+                        styles.quote,
+                        { color: colors.text, fontFamily: fontFamilyFor(theme.font) },
+                      ]}
+                    >
+                      {item.text}
+                    </Text>
+                    {item.author !== undefined && (
+                      <Text
+                        style={[
+                          styles.author,
+                          { color: secondaryLabel, fontFamily: fontFamilyFor(theme.font) },
+                        ]}
+                      >
+                        {item.author}
+                      </Text>
+                    )}
+                  </Pressable>
                   {/*
                     Fixed width and right aligned so the minus buttons stay in one
                     straight line down the card whatever the numbers are, with
@@ -204,7 +276,7 @@ export default function PhrasesScreen() {
                   <Pressable
                     onPress={() => store.removeQuoteAt(index)}
                     hitSlop={8}
-                    accessibilityLabel={s.a11yRemovePhrase(item)}
+                    accessibilityLabel={s.a11yRemovePhrase(item.text)}
                   >
                     <SymbolView name="minus.circle.fill" size={20} tintColor="#FF453A" />
                   </Pressable>
@@ -257,6 +329,13 @@ const styles = StyleSheet.create({
   },
   value: {
     fontSize: 17,
+  },
+  quoteBlock: {
+    flexShrink: 1,
+    gap: 2,
+  },
+  author: {
+    fontSize: 12,
   },
   quote: {
     fontSize: 15,

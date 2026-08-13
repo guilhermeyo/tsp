@@ -101,7 +101,47 @@
     "Você pode parar quando quiser.",
     "Faça a próxima coisa certa.",
     "Menos é quase sempre o suficiente.",
-    "O tempo que você tem é agora."
+    "O tempo que você tem é agora.",
+    {
+      "text": "Viver é muito perigoso.",
+      "author": "Guimarães Rosa"
+    },
+    {
+      "text": "No meio do caminho tinha uma pedra.",
+      "author": "Carlos Drummond de Andrade"
+    },
+    {
+      "text": "Tudo vale a pena se a alma não é pequena.",
+      "author": "Fernando Pessoa"
+    },
+    {
+      "text": "Ninguém educa ninguém.",
+      "author": "Paulo Freire"
+    },
+    {
+      "text": "Eles passarão, eu passarinho.",
+      "author": "Mario Quintana"
+    },
+    {
+      "text": "O sertão é do tamanho do mundo.",
+      "author": "Guimarães Rosa"
+    },
+    {
+      "text": "Liberdade é pouco.",
+      "author": "Clarice Lispector"
+    },
+    {
+      "text": "A vida é a arte do encontro.",
+      "author": "Vinicius de Moraes"
+    },
+    {
+      "text": "Navegar é preciso, viver não é preciso.",
+      "author": "Fernando Pessoa"
+    },
+    {
+      "text": "Feliz aquele que transfere o que sabe.",
+      "author": "Cora Coralina"
+    }
   ],
   "en": [
     "Start small, start now.",
@@ -204,7 +244,47 @@
     "You can stop whenever you want.",
     "Do the next right thing.",
     "Less is usually enough.",
-    "The only time you have is now."
+    "The only time you have is now.",
+    {
+      "text": "What stands in the way becomes the way.",
+      "author": "Marcus Aurelius"
+    },
+    {
+      "text": "We suffer more in imagination than in reality.",
+      "author": "Seneca"
+    },
+    {
+      "text": "How we spend our days is how we spend our lives.",
+      "author": "Annie Dillard"
+    },
+    {
+      "text": "The unread story is not a story.",
+      "author": "Ursula K. Le Guin"
+    },
+    {
+      "text": "Luck is the residue of design.",
+      "author": "Branch Rickey"
+    },
+    {
+      "text": "Ever tried. Ever failed. No matter. Try again.",
+      "author": "Samuel Beckett"
+    },
+    {
+      "text": "A ship in harbour is safe, but that is not what ships are built for.",
+      "author": "John A. Shedd"
+    },
+    {
+      "text": "The best way out is always through.",
+      "author": "Robert Frost"
+    },
+    {
+      "text": "Whereof one cannot speak, thereof one must be silent.",
+      "author": "Ludwig Wittgenstein"
+    },
+    {
+      "text": "Nothing is more revealing than movement.",
+      "author": "Martha Graham"
+    }
   ],
   "es": [
     "Empieza pequeño, empieza ahora.",
@@ -307,7 +387,47 @@
     "Puedes parar cuando quieras.",
     "Haz la próxima cosa correcta.",
     "Menos casi siempre alcanza.",
-    "El único tiempo que tienes es este."
+    "El único tiempo que tienes es este.",
+    {
+      "text": "Caminante, no hay camino, se hace camino al andar.",
+      "author": "Antonio Machado"
+    },
+    {
+      "text": "Nada se edifica sobre la piedra, todo sobre la arena.",
+      "author": "Jorge Luis Borges"
+    },
+    {
+      "text": "Andando se hacen los caminos.",
+      "author": "Antonio Machado"
+    },
+    {
+      "text": "Todo lo que quiero está al otro lado del miedo.",
+      "author": "Jorge Bucay"
+    },
+    {
+      "text": "La vida no es la que uno vivió, sino la que recuerda.",
+      "author": "Gabriel García Márquez"
+    },
+    {
+      "text": "Sólo sé que no sé nada.",
+      "author": "Sócrates"
+    },
+    {
+      "text": "Hoy es siempre todavía.",
+      "author": "Antonio Machado"
+    },
+    {
+      "text": "El tiempo es el mejor autor.",
+      "author": "Charlie Chaplin"
+    },
+    {
+      "text": "Lo esencial es invisible a los ojos.",
+      "author": "Antoine de Saint-Exupéry"
+    },
+    {
+      "text": "Despacio, que tengo prisa.",
+      "author": "Refrán"
+    }
   ],
   "ja": [
     "小さく始める",
@@ -410,7 +530,47 @@
     "いつでも止めていい",
     "次の正しい事をする",
     "大抵は少しで足りる",
-    "持っているのは今だけ"
+    "持っているのは今だけ",
+    {
+      "text": "日々是好日",
+      "author": "禅語"
+    },
+    {
+      "text": "初心忘るべからず",
+      "author": "世阿弥"
+    },
+    {
+      "text": "急がば回れ",
+      "author": "ことわざ"
+    },
+    {
+      "text": "千里の道も一歩から",
+      "author": "老子"
+    },
+    {
+      "text": "一期一会",
+      "author": "茶道"
+    },
+    {
+      "text": "塵も積もれば山となる",
+      "author": "ことわざ"
+    },
+    {
+      "text": "和敬清寂",
+      "author": "千利休"
+    },
+    {
+      "text": "光陰矢の如し",
+      "author": "ことわざ"
+    },
+    {
+      "text": "継続は力なり",
+      "author": "ことわざ"
+    },
+    {
+      "text": "足るを知る",
+      "author": "老子"
+    }
   ],
   "relay": {
     "en": {

@@ -17,6 +17,7 @@ import {
   type AppLanguage,
   type LauncherApp,
   type LauncherConfig,
+  type Quote,
   type Quotes,
   type TemperatureUnit,
   type Theme,
@@ -138,14 +139,35 @@ export function consumeQuotesUpgrade(): boolean {
  * an empty `items` is refilled from, and reading it out of `value` here would
  * reintroduce exactly the second source of truth this removed.
  */
+/**
+ * Accepts BOTH wire shapes, which is the whole migration: a bare string is a
+ * line with no author, an object carries one. Returns an array so a malformed
+ * entry can be dropped inside a flatMap without a null to filter afterwards.
+ *
+ * An author that trims to nothing is dropped rather than stored as '', so
+ * `author === undefined` is the only way to say "no author" and no renderer
+ * has to check for both.
+ */
+function decodeQuote(value: unknown): Quote[] {
+  if (typeof value === 'string') {
+    const text = value.trim();
+    return text === '' ? [] : [{ text }];
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+  const record = value as Record<string, unknown>;
+  if (typeof record.text !== 'string') return [];
+  const text = record.text.trim();
+  if (text === '') return [];
+  const author = typeof record.author === 'string' ? record.author.trim() : '';
+  return [author === '' ? { text } : { text, author }];
+}
+
 function decodeQuotes(value: unknown, language: AppLanguage): Quotes {
   if (!isRecord(value)) {
     didSynthesizeQuotes = true;
     return { ...DEFAULT_QUOTES, items: BUNDLED_QUOTES[language].slice() };
   }
-  const items = Array.isArray(value.items)
-    ? value.items.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
-    : [];
+  const items = Array.isArray(value.items) ? value.items.flatMap(decodeQuote) : [];
   return {
     enabled: typeof value.enabled === 'boolean' ? value.enabled : DEFAULT_QUOTES.enabled,
     duration: isQuoteDuration(value.duration) ? value.duration : DEFAULT_QUOTES.duration,
@@ -335,7 +357,12 @@ function serialize(config: LauncherConfig): string {
       // a number and sleeps; a Swift copy of these four values would be one
       // more pair to keep in sync for nothing.
       durationMs: QUOTE_DURATION_MS[config.quotes.duration],
-      items: config.quotes.items,
+      // Written back in the SAME dual shape it is read in: a bare string when
+      // there is no author. Keeps the payload the size it was for the 404
+      // unattributed lines, and keeps a pre-author reader working.
+      items: config.quotes.items.map((quote) =>
+        quote.author === undefined ? quote.text : { text: quote.text, author: quote.author }
+      ),
     },
     theme: {
       isDark: config.theme.isDark,

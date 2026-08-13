@@ -76,11 +76,27 @@ export interface Theme {
  * a dozen lines. The app owns resolution: it seeds `items` on first run and
  * rewrites it when the language changes, preserving anything the user added.
  */
+/**
+ * One line, and optionally who said it.
+ *
+ * ON THE WIRE this is a bare STRING when there is no author, and an object only
+ * when there is. Three reasons, and the third is the one that matters: the 404
+ * bundled lines are original and unattributed, so objects would trade 404
+ * wrappers for 40 authors; a reader from before this change still finds strings
+ * where it expects them; and the stats blob keys counts by TEXT, so identity is
+ * unchanged and no counter is orphaned by this migration.
+ */
+export interface Quote {
+  text: string;
+  /** Absent, never empty string. The form trims and drops blanks. */
+  author?: string;
+}
+
 export interface Quotes {
   /** Off means the relay opens the target immediately, as it did before. */
   enabled: boolean;
   duration: QuoteDuration;
-  items: string[];
+  items: Quote[];
 }
 
 /**

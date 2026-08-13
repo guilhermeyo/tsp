@@ -14,6 +14,7 @@
  * nothing, and `useMemo([config])` would re-render every screen to update a
  * number that one screen uses.
  */
+import type { Quote } from './types';
 import { LauncherNative } from '../../modules/launcher-native';
 
 /** Missing means the line has never been put up, which reads as blank, not 0. */
@@ -62,6 +63,6 @@ export function parseQuoteCounts(raw: string): QuoteCounts {
  * quantity the native draw minimises: it walks down to zero as the rotation
  * completes a cycle.
  */
-export function countNeverShown(items: readonly string[], counts: QuoteCounts): number {
-  return items.reduce((total, item) => (counts[item] === undefined ? total + 1 : total), 0);
+export function countNeverShown(items: readonly Quote[], counts: QuoteCounts): number {
+  return items.reduce((total, item) => (counts[item.text] === undefined ? total + 1 : total), 0);
 }

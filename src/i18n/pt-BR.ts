@@ -65,6 +65,7 @@ export const ptBR: Strings = {
   // Vírgula decimal, e um espaço antes da unidade.
   phrasesDurationSeconds: (seconds) => `${seconds.toFixed(1).replace('.', ',')} s`,
   phrasesSectionAdd: 'Escreva a sua',
+  phrasesAuthorHint: 'Autor (opcional)',
   phrasesAddHint: 'Escreva algo curto',
   phrasesRotation: (total) => `${total} na rotação`,
   phrasesRotationUnshown: (total, unshown) =>

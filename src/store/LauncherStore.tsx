@@ -13,6 +13,7 @@ import type {
   TemperatureUnit,
   Theme,
   WeatherPlace,
+  Quote,
 } from '@/domain/types';
 
 /**
@@ -36,7 +37,10 @@ export interface LauncherStore {
   setQuotesEnabled(enabled: boolean): void;
   setQuoteDuration(duration: QuoteDuration): void;
   /** Trims, ignores empty, ignores an exact duplicate, appends to the END. */
-  addQuote(text: string): void;
+  /** Author is optional and trimmed away when blank, so `author` is never ''. */
+  addQuote(text: string, author?: string): void;
+  /** Replaces the line at `index`, keeping its position. Author cleared when blank. */
+  updateQuoteAt(index: number, text: string, author?: string): void;
   removeQuoteAt(index: number): void;
   /**
    * The app's one language setting: the UI strings, the bundled phrases, the
@@ -63,7 +67,8 @@ type Action =
   | { type: 'updateTheme'; patch: Partial<Theme> }
   | { type: 'setQuotesEnabled'; enabled: boolean }
   | { type: 'setQuoteDuration'; duration: QuoteDuration }
-  | { type: 'addQuote'; text: string }
+  | { type: 'addQuote'; text: string; author?: string }
+  | { type: 'updateQuoteAt'; index: number; text: string; author?: string }
   | { type: 'removeQuoteAt'; index: number }
   | { type: 'setLanguage'; language: AppLanguage }
   | { type: 'setWeatherEnabled'; enabled: boolean }
@@ -75,6 +80,14 @@ type Action =
  * effect below keys off that identity, so a no-op action must never allocate a
  * new config, or it would write to disk and reload the widget for nothing.
  */
+/** Trims both, drops a blank author, and refuses a blank line. */
+function makeQuote(text: string, author?: string): Quote | null {
+  const trimmedText = text.trim();
+  if (trimmedText === '') return null;
+  const trimmedAuthor = author?.trim() ?? '';
+  return trimmedAuthor === '' ? { text: trimmedText } : { text: trimmedText, author: trimmedAuthor };
+}
+
 function reduce(state: LauncherConfig, action: Action): LauncherConfig {
   switch (action.type) {
     case 'add':
@@ -180,9 +193,33 @@ function reduce(state: LauncherConfig, action: Action): LauncherConfig {
       return { ...state, quotes: { ...state.quotes, duration: action.duration } };
 
     case 'addQuote': {
-      const text = action.text.trim();
-      if (text === '' || state.quotes.items.includes(text)) return state;
-      return { ...state, quotes: { ...state.quotes, items: [...state.quotes.items, text] } };
+      const quote = makeQuote(action.text, action.author);
+      // Dedupe on TEXT, not on the pair. The same line by two attributions is
+      // the same line, and the stats blob keys counts by text, so allowing both
+      // would give one counter two rows.
+      if (quote === null || state.quotes.items.some((item) => item.text === quote.text)) {
+        return state;
+      }
+      return { ...state, quotes: { ...state.quotes, items: [...state.quotes.items, quote] } };
+    }
+
+    case 'updateQuoteAt': {
+      const { index } = action;
+      if (index < 0 || index >= state.quotes.items.length) return state;
+      const quote = makeQuote(action.text, action.author);
+      if (quote === null) return state;
+      const existing = state.quotes.items[index];
+      if (existing !== undefined && existing.text === quote.text && existing.author === quote.author) {
+        return state;
+      }
+      // A rename to text that already exists elsewhere would collide on the
+      // stats key, so it is refused rather than silently merging two rows.
+      if (state.quotes.items.some((item, i) => i !== index && item.text === quote.text)) {
+        return state;
+      }
+      const items = state.quotes.items.slice();
+      items[index] = quote;
+      return { ...state, quotes: { ...state.quotes, items } };
     }
 
     case 'removeQuoteAt': {
@@ -267,8 +304,11 @@ export function LauncherStoreProvider({ children }: { children: ReactNode }) {
       setQuoteDuration(duration) {
         dispatch({ type: 'setQuoteDuration', duration });
       },
-      addQuote(text) {
-        dispatch({ type: 'addQuote', text });
+      addQuote(text, author) {
+        dispatch({ type: 'addQuote', text, author });
+      },
+      updateQuoteAt(index, text, author) {
+        dispatch({ type: 'updateQuoteAt', index, text, author });
       },
       removeQuoteAt(index) {
         dispatch({ type: 'removeQuoteAt', index });

@@ -70,6 +70,7 @@ export const ja: Strings = {
   // 小数点はピリオド、単位は秒、数字との間は詰める。
   phrasesDurationSeconds: (seconds) => `${seconds.toFixed(1)}秒`,
   phrasesSectionAdd: '自分のフレーズを追加',
+  phrasesAuthorHint: '著者（任意）',
   phrasesAddHint: '短く書く',
   phrasesRotation: (total) => `${total}件をローテーション`,
   phrasesRotationUnshown: (total, unshown) =>

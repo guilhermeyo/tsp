@@ -196,7 +196,7 @@ enum QuoteScreen {
 
   // MARK: - Presentation
 
-  private static func show(_ config: Config, phrase: String?, in appWindow: UIWindow?, forSnapshot: Bool) {
+  private static func show(_ config: Config, phrase: Quote?, in appWindow: UIWindow?, forSnapshot: Bool) {
     if let appWindow {
       hostWindow = appWindow
     }
@@ -263,7 +263,7 @@ enum QuoteScreen {
   /// next foreground came back to the new one -- which is precisely the
   /// mid-transition swap the keep-rule exists to prevent, reintroduced by the
   /// fix for it.
-  private static func refill(_ config: Config, phrase: String?) {
+  private static func refill(_ config: Config, phrase: Quote?) {
     guard let overlay = window else { return }
 
     if let root = overlay.rootViewController {
@@ -287,26 +287,54 @@ enum QuoteScreen {
 
   /// Paints `container` as the cover. No phrase means a plain themed field --
   /// deliberately, because that is still not the app list.
-  private static func fill(_ container: UIView, config: Config, phrase: String?) {
+  private static func fill(_ container: UIView, config: Config, phrase: Quote?) {
     let background: UIColor = config.isDark ? .black : .white
     container.backgroundColor = background
     container.isOpaque = true
-    guard let phrase, !phrase.isEmpty else { return }
+    guard let phrase, !phrase.text.isEmpty else { return }
+
+    let foreground: UIColor = config.isDark ? .white : .black
 
     let label = UILabel()
-    label.text = phrase
-    label.textColor = config.isDark ? .white : .black
+    label.text = phrase.text
+    label.textColor = foreground
     label.font = font(for: config)
     label.numberOfLines = 0
     label.textAlignment = .center
     label.adjustsFontSizeToFitWidth = true
     label.minimumScaleFactor = 0.6
-    label.translatesAutoresizingMaskIntoConstraints = false
-    container.addSubview(label)
+
+    // A STACK, not a second free-floating label, so the pair stays optically
+    // centred: with no author the line sits exactly where it always did, and
+    // with one the two centre together rather than the phrase shifting up by
+    // however tall the credit happens to be.
+    let stack = UIStackView(arrangedSubviews: [label])
+    stack.axis = .vertical
+    stack.alignment = .fill
+    stack.spacing = 10
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    if let author = phrase.author, !author.isEmpty {
+      let credit = UILabel()
+      // An en dash and a thin space, which is how a printed attribution is set.
+      credit.text = "\u{2013}\u{2009}\(author)"
+      // Dimmed as well as smaller. At 55 percent it reads as secondary at a
+      // glance, which matters when the whole thing is on screen for under a
+      // second and the phrase is what should be read first.
+      credit.textColor = foreground.withAlphaComponent(0.55)
+      credit.font = font(for: config, size: 15)
+      credit.numberOfLines = 1
+      credit.textAlignment = .center
+      credit.adjustsFontSizeToFitWidth = true
+      credit.minimumScaleFactor = 0.6
+      stack.addArrangedSubview(credit)
+    }
+
+    container.addSubview(stack)
     NSLayoutConstraint.activate([
-      label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-      label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32),
-      label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -32),
+      stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+      stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32),
+      stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -32),
     ])
   }
 
@@ -397,7 +425,7 @@ enum QuoteScreen {
   /// rounding error, it is the same accepted side effect the header of this
   /// file already documents: iOS gives no way to know at snapshot time which
   /// path the next foreground will take.
-  private static func roll(_ config: Config) -> String? {
+  private static func roll(_ config: Config) -> Quote? {
     rolledThisLaunch = true
     guard config.enabled else { return nil }
 
@@ -405,8 +433,8 @@ enum QuoteScreen {
     guard let next = pick(from: config.items, counts: stats.counts, excluding: stats.current) else {
       return nil
     }
-    stats.counts[next, default: 0] += 1
-    stats.current = next
+    stats.counts[next.text, default: 0] += 1
+    stats.current = next.text
     saveStats(stats, items: config.items)
     return next
   }
@@ -428,11 +456,16 @@ enum QuoteScreen {
   /// Costs one extra key read on a path that is already booting all of React
   /// Native, and no write at all unless there is nothing stored yet -- which is
   /// once per install.
-  private static func restoreOrRoll(_ config: Config) -> String? {
+  private static func restoreOrRoll(_ config: Config) -> Quote? {
     guard config.enabled else { return nil }
-    if !rolledThisLaunch, let current = loadStats().current, config.items.contains(current) {
+    // Matched on TEXT, so re-attributing a line does not lose the snapshot it
+    // is already carrying; the restored Quote is the CURRENT one, so an author
+    // edited since the snapshot was taken shows up on the first live frame.
+    if !rolledThisLaunch,
+       let current = loadStats().current,
+       let restored = config.items.first(where: { $0.text == current }) {
       rolledThisLaunch = true
-      return current
+      return restored
     }
     return roll(config)
   }
@@ -461,28 +494,28 @@ enum QuoteScreen {
   /// new line arriving within a handful of relays, takes it out of the running
   /// for two in a row, and still draws from the strict minimum for most of a
   /// cycle, because the tier only widens once the minimum tier runs thin.
-  private static func pick(from items: [String], counts: [String: Int], excluding current: String?) -> String? {
+  private static func pick(from items: [Quote], counts: [String: Int], excluding current: String?) -> Quote? {
     guard items.count > 1 else { return items.first }
 
     // The fallback covers a config that somehow holds nothing but duplicates of
     // the current line; the contract is the cover, so this may not return nil
     // for a list that has items in it.
-    let pool = items.filter { $0 != current }
+    let pool = items.filter { $0.text != current }
     let candidates = pool.isEmpty ? items : pool
 
     // Sorting 101 strings, on the backgrounding path, with no frame deadline
     // and nobody watching. The deterministic tie-break keeps the ranking stable
     // between draws; the randomness comes from the pick within the tier.
     let ranked = candidates.sorted { lhs, rhs in
-      let left = counts[lhs] ?? 0
-      let right = counts[rhs] ?? 0
-      return left == right ? lhs < rhs : left < right
+      let left = counts[lhs.text] ?? 0
+      let right = counts[rhs.text] ?? 0
+      return left == right ? lhs.text < rhs.text : left < right
     }
     guard let first = ranked.first else { return nil }
 
-    let lowest = counts[first] ?? 0
+    let lowest = counts[first.text] ?? 0
     let floor = min(ranked.count, max(5, items.count / 8))
-    var tier = ranked.prefix { (counts[$0] ?? 0) == lowest }
+    var tier = ranked.prefix { (counts[$0.text] ?? 0) == lowest }
     if tier.count < floor {
       tier = ranked.prefix(floor)
     }
@@ -522,7 +555,7 @@ enum QuoteScreen {
     return Stats(counts: counts, current: root?["current"] as? String)
   }
 
-  private static func saveStats(_ stats: Stats, items: [String]) {
+  private static func saveStats(_ stats: Stats, items: [Quote]) {
     var counts = stats.counts
     // Keys for lines no longer in rotation are KEPT on purpose. It is what
     // makes a language round trip non-destructive (the four catalogs are
@@ -535,7 +568,7 @@ enum QuoteScreen {
     // to hold: four languages at 101 lines each is 404 keys that all have to fit
     // alongside whatever the user wrote themselves.
     if counts.count > 1200 {
-      let live = Set(items)
+      let live = Set(items.map(\.text))
       counts = counts.filter { live.contains($0.key) }
     }
 
@@ -556,8 +589,7 @@ enum QuoteScreen {
   /// Mirrors the widget's `Theme.widgetFont`: same family choice, one size
   /// down, because this is a full screen holding one line rather than a widget
   /// holding six.
-  private static func font(for config: Config) -> UIFont {
-    let size: CGFloat = 30
+  private static func font(for config: Config, size: CGFloat = 30) -> UIFont {
     let base = UIFont.systemFont(ofSize: size, weight: .semibold)
     let design: UIFontDescriptor.SystemDesign
     switch config.font {
@@ -570,9 +602,20 @@ enum QuoteScreen {
     return UIFont(descriptor: descriptor, size: size)
   }
 
+  /// One line and, optionally, who said it.
+  ///
+  /// Decoded from BOTH wire shapes: a bare string when there is no author, an
+  /// object when there is. `text` alone is the identity everywhere else --
+  /// stats keys, the "not the one just shown" exclusion, the restore lookup --
+  /// so attribution can be edited without orphaning a counter.
+  struct Quote: Equatable {
+    let text: String
+    let author: String?
+  }
+
   struct Config {
     let enabled: Bool
-    let items: [String]
+    let items: [Quote]
     let isDark: Bool
     let font: String
     /// The interface language the user settled on, as a stored BCP-47 tag, or
@@ -616,8 +659,7 @@ enum QuoteScreen {
     // Top-level `language` is authoritative. `quotes.language` is read only as
     // a fallback, for a config written by a build that still mirrored it there.
     let language = (root?["language"] as? String) ?? (quotes?["language"] as? String)
-    let stored = (quotes?["items"] as? [String])?
-      .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? []
+    let stored = ((quotes?["items"] as? [Any]) ?? []).compactMap(Self.decodeQuote)
 
     return Config(
       enabled: quotes?["enabled"] as? Bool ?? true,
@@ -645,7 +687,25 @@ enum QuoteScreen {
     return root
   }()
 
-  private static func bundledItems(language: String?) -> [String] {
+  /// A bare string is an unattributed line; an object carries `text` and an
+  /// optional `author`. An author that trims to nothing becomes nil, so the
+  /// renderer never has to distinguish absent from empty.
+  private static func decodeQuote(_ raw: Any) -> Quote? {
+    if let text = raw as? String {
+      let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+      return trimmed.isEmpty ? nil : Quote(text: trimmed, author: nil)
+    }
+    guard let object = raw as? [String: Any],
+          let text = object["text"] as? String
+    else { return nil }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty { return nil }
+    let author = (object["author"] as? String)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return Quote(text: trimmed, author: (author?.isEmpty ?? true) ? nil : author)
+  }
+
+  private static func bundledItems(language: String?) -> [Quote] {
     if let language, let items = catalogPhrases(matching: language) {
       return items
     }
@@ -664,7 +724,7 @@ enum QuoteScreen {
     // The default language lives in the catalog rather than being re-decided
     // here, so Swift cannot drift from the TypeScript side.
     let fallback = bundledCatalog["defaultLanguage"] as? String ?? "en"
-    return bundledCatalog[fallback] as? [String] ?? []
+    return ((bundledCatalog[fallback] as? [Any]) ?? []).compactMap(decodeQuote)
   }
 
   /// A BCP-47 tag to one of the catalog's phrase arrays: exact key first, then
@@ -672,19 +732,20 @@ enum QuoteScreen {
   /// side. Underscores are normalised because `Locale` spells regions with one
   /// ("pt_BR") while the catalog keys use hyphens.
   ///
-  /// The `as? [String]` cast is also the guard against the catalog's non-phrase
+  /// The `as? [Any]` cast is also the guard against the catalog's non-phrase
   /// keys: `relay` is a dictionary and `defaultLanguage` is a string, so neither
   /// can ever be returned as a phrase list even when a tag prefix-matches their
   /// name. Keys are sorted so a tie between two candidates is at least stable.
-  private static func catalogPhrases(matching tag: String) -> [String]? {
+  private static func catalogPhrases(matching tag: String) -> [Quote]? {
     let normalized = tag.replacingOccurrences(of: "_", with: "-").lowercased()
     guard !normalized.isEmpty else { return nil }
     let prefix = String(normalized.prefix(2))
     let keys = bundledCatalog.keys.sorted()
     let key = keys.first { $0.lowercased() == normalized }
       ?? keys.first { $0.lowercased().hasPrefix(prefix) }
-    guard let key, let items = bundledCatalog[key] as? [String], !items.isEmpty else { return nil }
-    return items
+    guard let key, let raw = bundledCatalog[key] as? [Any] else { return nil }
+    let items = raw.compactMap(decodeQuote)
+    return items.isEmpty ? nil : items
   }
 
   /// The relay's failure alert, in the user's language, from the same

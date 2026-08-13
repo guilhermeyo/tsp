@@ -63,6 +63,7 @@ export const es: Strings = {
   // Coma decimal, y un espacio antes de la unidad.
   phrasesDurationSeconds: (seconds) => `${seconds.toFixed(1).replace('.', ',')} s`,
   phrasesSectionAdd: 'Escribe la tuya',
+  phrasesAuthorHint: 'Autor (opcional)',
   phrasesAddHint: 'Que sea corta',
   phrasesRotation: (total) =>
     total === 1 ? `${total} frase en rotación` : `${total} frases en rotación`,

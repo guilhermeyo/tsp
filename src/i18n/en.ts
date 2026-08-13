@@ -104,6 +104,7 @@ export const en = {
    */
   phrasesDurationSeconds: (seconds: number) => `${seconds.toFixed(1)}s`,
   phrasesSectionAdd: 'Add your own',
+  phrasesAuthorHint: 'Author (optional)',
   phrasesAddHint: 'Keep it short',
   phrasesRotation: (total: number) => `${total} in rotation`,
   /**

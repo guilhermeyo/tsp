@@ -24,7 +24,7 @@
  * no duplicated strings.
  */
 
-import type { AppLanguage } from './types';
+import type { AppLanguage, Quote } from './types';
 
 import CATALOG from './quotes.json';
 
@@ -96,9 +96,25 @@ export function isQuoteDuration(value: unknown): value is QuoteDuration {
  * up `bundledCatalog[language]` at the top level, so the phrase arrays have to
  * stay top-level too.
  */
-export const BUNDLED_QUOTES: Record<AppLanguage, readonly string[]> = {
-  'pt-BR': CATALOG['pt-BR'],
-  en: CATALOG.en,
-  es: CATALOG.es,
-  ja: CATALOG.ja,
+/**
+ * Lifts the JSON's dual shape into `Quote`. An entry is a bare STRING when the
+ * line has no author, which is all 404 of the original ones, and an object only
+ * for the attributed additions. Same rule the config decoder follows, so the
+ * bundle and the stored config never disagree about what a quote is.
+ */
+function lift(entries: readonly (string | { text: string; author?: string })[]): readonly Quote[] {
+  return entries.map((entry) =>
+    typeof entry === 'string'
+      ? { text: entry }
+      : entry.author === undefined
+        ? { text: entry.text }
+        : { text: entry.text, author: entry.author }
+  );
+}
+
+export const BUNDLED_QUOTES: Record<AppLanguage, readonly Quote[]> = {
+  'pt-BR': lift(CATALOG['pt-BR']),
+  en: lift(CATALOG.en),
+  es: lift(CATALOG.es),
+  ja: lift(CATALOG.ja),
 };
