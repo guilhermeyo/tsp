@@ -9,7 +9,8 @@ import Foundation
 enum BundledDefaults {
     static let apps: [LauncherApp] = [
         LauncherApp(name: "mensagens", urlString: "ichat://"),
-        LauncherApp(name: "whatsapp", urlString: "whatsapp://"),
+        LauncherApp(name: "whatsapp", urlString: "whatsapp-consumer://"),
+        LauncherApp(name: "wpp business", urlString: "whatsapp-smb://"),
         LauncherApp(name: "waze", urlString: "waze://"),
         LauncherApp(name: "música", urlString: "music://"),
         LauncherApp(name: "ajustes", urlString: "App-Prefs://"),

@@ -25,7 +25,8 @@ const SEEDS: readonly Omit<LauncherApp, 'id'>[] = [
   // a launcher row should. The simulator disagrees, so do not "fix" this from
   // simulator evidence.
   { name: 'mensagens', urlString: 'ichat://' },
-  { name: 'whatsapp', urlString: 'whatsapp://' },
+  { name: 'whatsapp', urlString: 'whatsapp-consumer://' },
+  { name: 'wpp business', urlString: 'whatsapp-smb://' },
   { name: 'waze', urlString: 'waze://' },
   { name: 'música', urlString: 'music://' },
   // App-Prefs:// is a private URL scheme. It works today, but it is a

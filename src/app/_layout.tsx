@@ -1,12 +1,10 @@
-import * as Linking from 'expo-linking';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { Alert, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { parseTarget } from '@/domain/deepLink';
 import { LauncherStoreProvider, useTheme } from '@/store/LauncherStore';
 
 /**
@@ -19,79 +17,24 @@ import { LauncherStoreProvider, useTheme } from '@/store/LauncherStore';
 export const unstable_settings = { anchor: 'index' };
 
 /**
- * Opens the third-party URL a widget row asked for. Twin of `URLRelay.handle`.
+ * THE RELAY NO LONGER LIVES IN JAVASCRIPT.
  *
- * Lives here, at the root, rather than inside `open.tsx`, for two reasons.
+ * It is handled in `ios/SimplePhone/AppDelegate.swift`, in Swift, before React
+ * Native starts. A widget tap always launches this app -- iOS gives no way
+ * around that -- so the only thing under our control is how long it is on
+ * screen, and doing it here meant paying a full React Native cold start
+ * (Hermes, the bundle, Expo Router mounting, an effect firing) before the
+ * target app was even asked to open. The SwiftUI original had no such tax.
  *
- * The faithful one: the Swift app registered `.onOpenURL` on its WindowGroup,
- * not on a screen. The relay was never a view; it was a side effect of the
- * window receiving a URL, which is why it dismissed nothing and did not care
- * what was on top.
+ * Do not restore it here. `AppDelegate` returns true WITHOUT forwarding a relay
+ * URL to `RCTLinkingManager`, so JavaScript never sees one while the app runs;
+ * but on a COLD launch `Linking.getInitialURL()` still reports it, because
+ * React Native reads the same launchOptions. An opener on this side would fire
+ * a second time and the target app would open, close and open again.
  *
- * The load-bearing one: Expo Router will route the same URL to `open.tsx`, but
- * it mangles the payload on the way. Its `extractExpoPathFromURL` percent-decodes
- * the whole query and re-emits it as a plain path string, which is then parsed
- * as a query a second time. `simplephonern://open?u=https%3A%2F%2Fx.com%2Fs%3Fq%3Da%26b%3Dc`
- * becomes the path `open?u=https://x.com/s?q=a&b=c`, and `u` comes back
- * truncated at the first `&`. A target carrying its own percent-escape gets
- * decoded twice on top of that. So the raw URL is parsed here, once, by
- * `parseTarget`, and `open.tsx` never touches the payload at all.
+ * `src/app/open.tsx` is no longer reachable through a widget tap either.
  */
-function relayDeepLink(url: string): void {
-  const target = parseTarget(url);
-  if (target === null) return;
 
-  // The original swallowed `success == false` here: tap a row for an app you do
-  // not have and Simple Phone opened, showed the list and sat there. That was a
-  // TODO in the Swift, and it is the single most expensive thing about this
-  // app's UX -- a tap that does nothing is indistinguishable from a tap that
-  // opened the WRONG app, from a scheme Apple changed under you, from a typo.
-  // Diagnosing any of those costs an evening. So failure talks now.
-  Linking.openURL(target).catch(() => {
-    Alert.alert(
-      'Could not open this',
-      `iOS refused to open:\n\n${target}\n\n` +
-        'Either no installed app handles it, or the scheme changed. Edit the row ' +
-        'and use Test to try another URL.'
-    );
-  });
-}
-
-/**
- * The launch URL must be consumed exactly once per JS runtime. The root layout
- * mounts once in production, but React can double-invoke effects in dev, and
- * `getInitialURL` keeps returning the launch URL forever -- without this the
- * target app would be re-opened on every remount.
- */
-let coldStartURLConsumed = false;
-
-function useDeepLinkRelay(): void {
-  useEffect(() => {
-    // iOS delivers a URL to a RUNNING app through `application:openURL:`, which
-    // RCTLinkingManager forwards as this event. A cold launch instead carries
-    // the URL in `launchOptions`, and by the time JS is listening the moment has
-    // passed -- hence the two separate paths below. They never both fire for the
-    // same URL.
-    const subscription = Linking.addEventListener('url', (event) => {
-      relayDeepLink(event.url);
-    });
-
-    if (!coldStartURLConsumed) {
-      coldStartURLConsumed = true;
-      Linking.getInitialURL()
-        .then((url) => {
-          // `getLinkingURL` is the Expo-native reader Expo Router itself uses for
-          // iOS cold starts; it covers the cases where RCTLinkingManager's
-          // launchOptions copy comes back empty.
-          const launchURL = url ?? Linking.getLinkingURL();
-          if (launchURL !== null) relayDeepLink(launchURL);
-        })
-        .catch(() => {});
-    }
-
-    return () => subscription.remove();
-  }, []);
-}
 
 /**
  * SwiftUI applied `.preferredColorScheme(theme.colorScheme)` to the WindowGroup,
@@ -136,8 +79,6 @@ function ThemedNavigation() {
 }
 
 export default function RootLayout() {
-  useDeepLinkRelay();
-
   return (
     // Outermost by requirement of react-native-gesture-handler, which
     // react-native-reorderable-list builds the drag interaction on.
