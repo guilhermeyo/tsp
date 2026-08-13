@@ -45,7 +45,12 @@ export const CATALOG: readonly CatalogEntry[] = [
   entry('WhatsApp', 'whatsapp://', 'Messaging'),
   entry('Telegram', 'tg://', 'Messaging'),
   entry('Messenger', 'fb-messenger://', 'Messaging'),
-  entry('Messages', 'sms://', 'Messaging'),
+  entry('Messages', 'messages://', 'Messaging', {
+    note: 'Opens the Messages app on the conversation list. Verified on iOS 26.',
+  }),
+  entry('New message', 'sms://', 'Messaging', {
+    note: 'Opens the compose sheet, not the app. Use "Messages" to open the app itself.',
+  }),
 
   // Social
   entry('Instagram', 'instagram://', 'Social'),

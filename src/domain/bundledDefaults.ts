@@ -18,7 +18,7 @@ import type { LauncherApp } from './types';
  * only the precomposed form matches the Swift literal.
  */
 const SEEDS: readonly Omit<LauncherApp, 'id'>[] = [
-  { name: 'mensagens', urlString: 'sms://' },
+  { name: 'mensagens', urlString: 'messages://' },
   { name: 'whatsapp', urlString: 'whatsapp://' },
   { name: 'waze', urlString: 'waze://' },
   { name: 'música', urlString: 'music://' },
