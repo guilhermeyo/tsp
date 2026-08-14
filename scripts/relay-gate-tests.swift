@@ -213,6 +213,81 @@ enum RelayGateTests {
     check(first == 1 && second == 1, "a fresh relay after a reset opens")
   }
 
+  // MARK: - RelayReturn: the phrase waiting for you when you come back
+
+  /// The ordinary miss. The app handed off, you tapped the breadcrumb, and the
+  /// line you did not get to read is what you come back to.
+  static func testReturnAfterHandoffOffersThePhrase() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "the obstacle is the way", at: 1000)
+    check(ret.consume(at: 1002) == "the obstacle is the way", "a quick return offers the line")
+  }
+
+  /// Opening the app without a relay behind it is someone going to use it. The
+  /// cover comes down as it always did.
+  static func testPlainActivationOffersNothing() {
+    var ret = RelayReturn()
+    check(ret.consume(at: 1000) == nil, "an activation with no handoff behind it offers nothing")
+  }
+
+  /// The card is for a miss, not a bookmark. Come back much later and you are
+  /// opening the app to do something, not chasing a line.
+  static func testStaleReturnOffersNothing() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "seneca", at: 1000)
+    check(ret.consume(at: 1000 + RelayReturn.window + 1) == nil, "a late return offers nothing")
+  }
+
+  /// Exactly on the boundary still counts. An off-by-one here is a card that
+  /// vanishes for no reason a user could ever describe.
+  static func testReturnOnTheBoundaryStillOffers() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "marcus", at: 1000)
+    check(ret.consume(at: 1000 + RelayReturn.window) == "marcus", "the boundary is inclusive")
+  }
+
+  /// Consuming is once. The second activation is the user opening the app.
+  static func testTheOfferIsConsumed() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "epictetus", at: 1000)
+    _ = ret.consume(at: 1001)
+    check(ret.consume(at: 1002) == nil, "the offer is not made twice")
+  }
+
+  /// A stale offer is consumed even though it shows nothing, so it cannot
+  /// surface later on an unrelated activation.
+  static func testAStaleOfferIsAlsoConsumed() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "seneca", at: 1000)
+    _ = ret.consume(at: 1000 + RelayReturn.window + 1)
+    check(!ret.isPending, "a stale offer does not linger")
+  }
+
+  /// The target refused to open, so the app never left and nothing was missed.
+  static func testFailedOpenOwesNothing() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "marcus", at: 1000)
+    ret.clear()
+    check(ret.consume(at: 1001) == nil, "a relay that never left owes no card")
+  }
+
+  /// A phrase-less cover (phrases switched off, or an empty list) still hands
+  /// off, and must not offer an empty card on the way back.
+  static func testHandoffWithNoPhraseOffersNothing() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: nil, at: 1000)
+    check(ret.consume(at: 1001) == nil, "no phrase means no card")
+  }
+
+  /// A second relay replaces the first. You come back to the line you actually
+  /// just missed, not to one from two launches ago.
+  static func testTheLatestHandoffWins() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "first", at: 1000)
+    ret.handedOff(phrase: "second", at: 1010)
+    check(ret.consume(at: 1011) == "second", "the most recent line is the one waiting")
+  }
+
   static func main() {
     testOpensWhenDurationRunsOut()
     testInstantStillFreezesUnderAFinger()
@@ -227,6 +302,16 @@ enum RelayGateTests {
     testPressAfterHandoffDoesNothing()
     testResetForgetsAHeldOpen()
     testRelayAfterResetOpens()
+
+    testReturnAfterHandoffOffersThePhrase()
+    testPlainActivationOffersNothing()
+    testStaleReturnOffersNothing()
+    testReturnOnTheBoundaryStillOffers()
+    testTheOfferIsConsumed()
+    testAStaleOfferIsAlsoConsumed()
+    testFailedOpenOwesNothing()
+    testHandoffWithNoPhraseOffersNothing()
+    testTheLatestHandoffWins()
 
     print("")
     if failures == 0 {

@@ -181,7 +181,9 @@ class AppDelegate: ExpoAppDelegate {
       object: nil,
       queue: .main
     ) { _ in
-      QuoteScreen.dismiss()
+      // Not `dismiss` any more: a return that follows a handoff keeps the line
+      // on screen so a phrase nobody got to read is not simply lost.
+      QuoteScreen.activate()
     }
 
     // The other half of the fix, and the half no overlay can do on its own.

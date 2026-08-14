@@ -14,6 +14,7 @@
 		61B68D3406ED488394EE0274 /* expo.icon in Resources */ = {isa = PBXBuildFile; fileRef = 3C57DDF8596F4E6D8A62CADE /* expo.icon */; };
 		AA11748422D0307B40044C1DB /* QuoteScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11748412D0307B40044C1DA /* QuoteScreen.swift */; };
 		AA11748442D0307B40044C1DD /* RelayGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11748432D0307B40044C1DC /* RelayGate.swift */; };
+		AA11748462D0307B40044C1DF /* RelayReturn.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11748452D0307B40044C1DE /* RelayReturn.swift */; };
 		AA1174860D0307B40044C1DB /* quotes.json in Resources */ = {isa = PBXBuildFile; fileRef = AA1174850D0307B40044C1DA /* quotes.json */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		D72AF3E268B7DAC6966D58AB /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F0F94EE4F1707B276B4961A5 /* PrivacyInfo.xcprivacy */; };
@@ -57,6 +58,7 @@
 		7E2FC156FC87EBFB33C2B91A /* Pods-SimplePhone.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SimplePhone.release.xcconfig"; path = "Target Support Files/Pods-SimplePhone/Pods-SimplePhone.release.xcconfig"; sourceTree = "<group>"; };
 		AA11748412D0307B40044C1DA /* QuoteScreen.swift */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.swift; name = QuoteScreen.swift; path = SimplePhone/QuoteScreen.swift; sourceTree = "<group>"; };
 		AA11748432D0307B40044C1DC /* RelayGate.swift */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.swift; name = RelayGate.swift; path = SimplePhone/RelayGate.swift; sourceTree = "<group>"; };
+		AA11748452D0307B40044C1DE /* RelayReturn.swift */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = sourcecode.swift; name = RelayReturn.swift; path = SimplePhone/RelayReturn.swift; sourceTree = "<group>"; };
 		AA1174850D0307B40044C1DA /* quotes.json */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = text.json; name = quotes.json; path = ../src/domain/quotes.json; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = SimplePhone/SplashScreen.storyboard; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; includeInIndex = 0; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
@@ -128,6 +130,7 @@
 				F11748412D0307B40044C1D9 /* AppDelegate.swift */,
 				AA11748412D0307B40044C1DA /* QuoteScreen.swift */,
 				AA11748432D0307B40044C1DC /* RelayGate.swift */,
+				AA11748452D0307B40044C1DE /* RelayReturn.swift */,
 				AA1174850D0307B40044C1DA /* quotes.json */,
 				F11748442D0722820044C1D9 /* SimplePhone-Bridging-Header.h */,
 				BB2F792B24A3F905000567C9 /* Supporting */,
@@ -489,6 +492,7 @@
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
 				AA11748422D0307B40044C1DB /* QuoteScreen.swift in Sources */,
 				AA11748442D0307B40044C1DD /* RelayGate.swift in Sources */,
+				AA11748462D0307B40044C1DF /* RelayReturn.swift in Sources */,
 				0B0579DA08D12C1D68FD80D9 /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

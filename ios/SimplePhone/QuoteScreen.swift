@@ -105,10 +105,66 @@ enum QuoteScreen {
   /// back into the app delegate.
   static func attach(hostWindow window: UIWindow?) {
     hostWindow = window
+    listenForTouches(on: window)
   }
+
+  /// A SECOND place the finger can be heard, on the app's own window.
+  ///
+  /// The cover is its own UIWindow above everything, and `CoverView` picks up
+  /// touches that land on it. That is not enough. A warm relay arrives while
+  /// the system is still animating the app in, and during that stretch the
+  /// overlay is not necessarily the window UIKit hands the touch to even though
+  /// it is the one being drawn. A touch that lands the instant the phrase
+  /// appears was going nowhere: the user was told to hold, held, and watched
+  /// the app leave anyway.
+  ///
+  /// A recogniser on the host window catches that case without taking anything
+  /// away from anyone: `cancelsTouchesInView` stays false so React Native still
+  /// sees every touch, and it only speaks to the gate while a relay is actually
+  /// in flight.
+  private static func listenForTouches(on window: UIWindow?) {
+    guard let window else { return }
+    let recognizer = UILongPressGestureRecognizer(target: Proxy.shared,
+                                                  action: #selector(Proxy.hostTouch(_:)))
+    recognizer.minimumPressDuration = 0
+    recognizer.cancelsTouchesInView = false
+    recognizer.delaysTouchesBegan = false
+    recognizer.delaysTouchesEnded = false
+    recognizer.delegate = Proxy.shared
+    window.addGestureRecognizer(recognizer)
+  }
+
+  /// What the phrase you missed was, and whether you are owed it back.
+  private static var pendingReturn = RelayReturn()
+
+  /// The line that was on the cover when THIS relay started.
+  ///
+  /// Captured here and not read back later, because backgrounding rolls the
+  /// next phrase to paint into the snapshot: by the time anyone comes back, the
+  /// stored `current` is a different line and the card would offer a phrase the
+  /// user never saw.
+  private static var relayPhrase: String?
 
   static func beginRelay() {
     relayInFlight = true
+    relayPhrase = nil
+  }
+
+  /// Called the instant the target is asked to open, which is the moment the
+  /// phrase becomes something the user might not have finished reading.
+  private static func recordHandoff() {
+    pendingReturn.handedOff(phrase: relayPhrase, at: Date().timeIntervalSince1970)
+  }
+
+  /// The app is being activated. Either the user is coming back from a relay
+  /// they did not get to read, or they are opening the app to use it.
+  static func activate() {
+    guard !relayInFlight else { return }
+    if let missed = pendingReturn.consume(at: Date().timeIntervalSince1970), window != nil {
+      presentCard(missed)
+      return
+    }
+    dismiss()
   }
 
   /// The relay is over when the app has left, not when `open` was called.
@@ -154,7 +210,17 @@ enum QuoteScreen {
     } else if window == nil {
       // Reachable only on a COLD relay: a warm one always finds the cover the
       // last backgrounding left standing. See `restoreOrRoll`.
-      show(config, phrase: restoreOrRoll(config), in: appWindow ?? hostWindow, forSnapshot: false)
+      let drawn = restoreOrRoll(config)
+      relayPhrase = drawn?.text
+      show(config, phrase: drawn, in: appWindow ?? hostWindow, forSnapshot: false)
+    } else {
+      // The cover being KEPT is the one the last backgrounding painted, and
+      // `roll` recorded that line as `current` when it painted it. Reading it
+      // HERE and not in `beginRelay` is the difference between the card showing
+      // the phrase the user saw and showing the one before it: on a cold relay
+      // the branch above draws a fresh line, and a capture taken before this
+      // call would already be stale.
+      relayPhrase = loadStats().current
     }
     // Anything else: the cover already on screen is KEPT exactly as it is, and
     // this call reads nothing but the config it already needed.
@@ -196,7 +262,188 @@ enum QuoteScreen {
   /// be visible and tappable.
   static func dismissForFailure() {
     relayInFlight = false
+    // Nothing was missed: the app never left, and the user is about to be
+    // looking at an alert rather than at the phrase.
+    pendingReturn.clear()
     dismiss()
+  }
+
+  // MARK: - The phrase you missed
+
+  /// Turns the cover already on screen into something you can read at leisure.
+  ///
+  /// Not a new screen and deliberately so. The cover has been up since the last
+  /// backgrounding, so it is what the system was already replaying while the
+  /// app animated back in: the line simply stays instead of being torn down,
+  /// and gains a count and a way out. Nothing flashes and nothing moves.
+  private static func presentCard(_ text: String) {
+    guard let overlay = window, let root = overlay.rootViewController?.view else { return }
+    // A touch on the card is not a touch on a relay. Without this the press
+    // that dismisses it would leave the gate holding, and the NEXT relay would
+    // inherit a finger that is not there.
+    gate.reset()
+
+    let config = loadConfig()
+    let author = config.items.first { $0.text == text }?.author
+    let count = loadStats().counts[text] ?? 0
+
+    root.subviews.forEach { $0.removeFromSuperview() }
+    let phrase = Quote(text: text, author: author)
+    cardPhrase = phrase
+    let stack = fill(root, config: config, phrase: phrase)
+    addCardChrome(to: root, below: stack, config: config, count: count)
+    shade?.removeFromSuperview()
+    shade = nil
+    root.layoutIfNeeded()
+  }
+
+  // MARK: - Taking the line with you
+
+  /// The line as a picture, without any of the card's furniture.
+  ///
+  /// What the card needs on screen and what belongs in something you post are
+  /// different things. A count of how many times a phrase has come up is a fact
+  /// about YOUR phone, and a button labelled "Open The Simple Phone" is a
+  /// control, not content. Both are dropped here, and what replaces them is a
+  /// small wordmark, so the image says where it came from without asking
+  /// anything of whoever sees it.
+  ///
+  /// Rendered from a view that was never on screen, through `layer.render`
+  /// rather than `drawHierarchy`, because the latter needs the view to be in a
+  /// window and this one deliberately is not.
+  private static func cardImage(config: Config, phrase: Quote) -> UIImage? {
+    let size = window?.bounds.size ?? UIScreen.main.bounds.size
+    guard size.width > 0, size.height > 0 else { return nil }
+
+    let canvas = UIView(frame: CGRect(origin: .zero, size: size))
+    fill(canvas, config: config, phrase: phrase)
+
+    let mark = UILabel()
+    mark.text = "The Simple Phone"
+    // Fainter than the attribution on the card, which is already secondary.
+    // A signature, not a caption.
+    mark.textColor = (config.isDark ? UIColor.white : .black).withAlphaComponent(0.3)
+    mark.font = font(for: config, size: 13)
+    mark.textAlignment = .center
+    mark.translatesAutoresizingMaskIntoConstraints = false
+    canvas.addSubview(mark)
+    NSLayoutConstraint.activate([
+      mark.centerXAnchor.constraint(equalTo: canvas.centerXAnchor),
+      mark.bottomAnchor.constraint(equalTo: canvas.bottomAnchor, constant: -56),
+    ])
+
+    canvas.setNeedsLayout()
+    canvas.layoutIfNeeded()
+
+    let renderer = UIGraphicsImageRenderer(bounds: canvas.bounds)
+    return renderer.image { context in canvas.layer.render(in: context.cgContext) }
+  }
+
+  /// The phrase as text, the way a person would write it down.
+  private static func cardText(_ phrase: Quote) -> String {
+    guard let author = phrase.author, !author.isEmpty else { return phrase.text }
+    return "\(phrase.text)\n\u{2014}\u{2009}\(author)"
+  }
+
+  fileprivate static func copyCard() {
+    guard let phrase = cardPhrase else { return }
+    UIPasteboard.general.string = cardText(phrase)
+    flashConfirmation()
+  }
+
+  fileprivate static func shareCard() {
+    guard let phrase = cardPhrase, let presenter = window?.rootViewController else { return }
+    var items: [Any] = [cardText(phrase)]
+    if let image = cardImage(config: loadConfig(), phrase: phrase) {
+      items.insert(image, at: 0)
+    }
+    let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+    presenter.present(sheet, animated: true)
+  }
+
+  /// A word where the count was, for a moment. Cheaper than an alert and it
+  /// does not take the card away from under the user.
+  private static func flashConfirmation() {
+    guard let label = tallyLabel else { return }
+    let previous = label.text
+    label.text = relayStrings(language: loadConfig().language)["copied"] ?? "Copied"
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+      guard tallyLabel === label else { return }
+      label.text = previous
+    }
+  }
+
+  /// The line the card is showing, so copy and share do not have to find it
+  /// again, and the count label, so the copy confirmation has somewhere to go.
+  private static var cardPhrase: Quote?
+  private static weak var tallyLabel: UILabel?
+
+  /// A glyph you can find but not trip over: dimmed to the same weight as the
+  /// attribution, with a touch target far larger than the icon it draws.
+  private static func chromeButton(symbol: String, label: String,
+                                   action: Selector, tint: UIColor) -> UIButton {
+    let button = UIButton(type: .system)
+    let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+    button.setImage(UIImage(systemName: symbol, withConfiguration: config), for: .normal)
+    button.tintColor = tint.withAlphaComponent(0.45)
+    button.accessibilityLabel = label
+    button.addTarget(Proxy.shared, action: action, for: .touchUpInside)
+    button.translatesAutoresizingMaskIntoConstraints = false
+    button.widthAnchor.constraint(equalToConstant: 44).isActive = true
+    button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+    return button
+  }
+
+  /// The count and the way back, under the line.
+  private static func addCardChrome(to container: UIView, below stack: UIStackView?,
+                                    config: Config, count: Int) {
+    let foreground: UIColor = config.isDark ? .white : .black
+    let strings = relayStrings(language: config.language)
+
+    let tally = UILabel()
+    tally.text = count == 1
+      ? (strings["shownOnce"] ?? "shown once")
+      : String(format: strings["shownTimes"] ?? "shown %@ times", "\(count)")
+    // Dimmer than the attribution, which is already secondary. This is a
+    // footnote about a phrase, not part of it.
+    tally.textColor = foreground.withAlphaComponent(0.35)
+    tally.font = font(for: config, size: 13)
+    tally.textAlignment = .center
+    tally.translatesAutoresizingMaskIntoConstraints = false
+    tallyLabel = tally
+
+    let back = UIButton(type: .system)
+    back.setTitle(strings["openApp"] ?? "Open The Simple Phone", for: .normal)
+    back.setTitleColor(foreground.withAlphaComponent(0.5), for: .normal)
+    back.titleLabel?.font = font(for: config, size: 15)
+    back.addTarget(Proxy.shared, action: #selector(Proxy.dismissCard), for: .touchUpInside)
+    back.translatesAutoresizingMaskIntoConstraints = false
+
+    let copy = chromeButton(symbol: "doc.on.doc", label: strings["copy"] ?? "Copy",
+                            action: #selector(Proxy.copyCard), tint: foreground)
+    let share = chromeButton(symbol: "square.and.arrow.up", label: strings["share"] ?? "Share",
+                             action: #selector(Proxy.shareCard), tint: foreground)
+
+    container.addSubview(tally)
+    container.addSubview(back)
+    container.addSubview(copy)
+    container.addSubview(share)
+    NSLayoutConstraint.activate([
+      share.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+      share.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 8),
+      copy.trailingAnchor.constraint(equalTo: share.leadingAnchor, constant: -4),
+      copy.centerYAnchor.constraint(equalTo: share.centerYAnchor),
+    ])
+    NSLayoutConstraint.activate([
+      tally.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+      // Under the LINE, not under the middle of the screen. A four line phrase
+      // reaches well past centre, and anchoring to the centre printed the count
+      // straight through the attribution.
+      tally.topAnchor.constraint(equalTo: stack?.bottomAnchor ?? container.centerYAnchor,
+                                 constant: 28),
+      back.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+      back.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.bottomAnchor, constant: -28),
+    ])
   }
 
   /// Where the failure alert should be presented from. The cover is normally
@@ -216,13 +463,13 @@ enum QuoteScreen {
 
     let overlay: UIWindow
     if let scene = windowScene(preferring: appWindow) {
-      overlay = UIWindow(windowScene: scene)
+      overlay = CoverWindow(windowScene: scene)
     } else {
       // No scene yet. This app has no `UIApplicationSceneManifest`, so it runs
       // the legacy app-delegate lifecycle and this initialiser is valid -- it
       // is the same one the app's own window uses in AppDelegate. Never return
       // without a cover just because the scene set was not populated yet.
-      overlay = UIWindow(frame: UIScreen.main.bounds)
+      overlay = CoverWindow(frame: UIScreen.main.bounds)
     }
     // Above the app's own window (.normal, 0) and above React Native's debug
     // chrome in a Debug build (RCTDevLoadingView sits at .statusBar + 1), while
@@ -305,11 +552,12 @@ enum QuoteScreen {
 
   /// Paints `container` as the cover. No phrase means a plain themed field --
   /// deliberately, because that is still not the app list.
-  private static func fill(_ container: UIView, config: Config, phrase: Quote?) {
+  @discardableResult
+  private static func fill(_ container: UIView, config: Config, phrase: Quote?) -> UIStackView? {
     let background: UIColor = config.isDark ? .black : .white
     container.backgroundColor = background
     container.isOpaque = true
-    guard let phrase, !phrase.text.isEmpty else { return }
+    guard let phrase, !phrase.text.isEmpty else { return nil }
 
     let foreground: UIColor = config.isDark ? .white : .black
 
@@ -354,6 +602,7 @@ enum QuoteScreen {
       stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32),
       stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -32),
     ])
+    return stack
   }
 
   /// `connectedScenes` is an unordered Set, so the old
@@ -436,13 +685,78 @@ enum QuoteScreen {
   /// It still costs nothing when nobody is touching, which is the rule about an
   /// off switch never charging for itself.
   static func scheduleOpen(after seconds: TimeInterval, _ open: @escaping () -> Void) {
-    let token = gate.arm(open)
+    let token = gate.arm {
+      recordHandoff()
+      open()
+    }
     guard seconds > 0 else {
       DispatchQueue.main.async { gate.durationElapsed(token) }
       return
     }
-    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { gate.durationElapsed(token) }
+    countDown(seconds, token: token)
   }
+
+  /// Starts the hold only once the app is ACTIVE, which is the difference
+  /// between a duration you can touch and one you can only watch.
+  ///
+  /// A warm relay arrives during the open animation, and for the whole of that
+  /// animation iOS is replaying a snapshot image while the app is not
+  /// interactive. `application(_:open:options:)` runs inside that window, so
+  /// counting from there spent the user's 0.8 seconds on a picture: by the time
+  /// a finger could be delivered anywhere, the target had been asked to open.
+  /// The phrase looked right and the hold was unreachable.
+  ///
+  /// The number in the Phrases screen is therefore seconds of LIVE cover, which
+  /// is what it always claimed to be and what the header of this file says the
+  /// frame wait exists to guarantee.
+  /// How long after the app becomes active before a touch is actually
+  /// delivered to it.
+  ///
+  /// MEASURED, not guessed. A trace of eleven real widget taps on an iPhone 17
+  /// Pro: the relay starts at 0, `didBecomeActive` lands at 0.21 to 0.23, and
+  /// the earliest touch the app ever saw was 0.42. Never once earlier, and not
+  /// on the host window either, which listens precisely to catch that case.
+  /// For that first stretch the finger belongs to the home screen and iOS does
+  /// not hand it over.
+  ///
+  /// Without this the duration was being spent on a picture: the phrase is
+  /// visible from 0 because the system is replaying the snapshot, so a "1.5
+  /// second" cover offered 1.36 seconds you could touch and 0.4 you could only
+  /// look at. Adding it back is what makes the number in the Phrases screen
+  /// mean what it says.
+  private static let touchSettleDelay: TimeInterval = 0.25
+
+  private static func countDown(_ seconds: TimeInterval, token: Int) {
+    guard UIApplication.shared.applicationState != .active else {
+      DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { gate.durationElapsed(token) }
+      return
+    }
+
+    if let waiter = activationWaiter {
+      NotificationCenter.default.removeObserver(waiter)
+    }
+    activationWaiter = NotificationCenter.default.addObserver(
+      forName: UIApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { _ in
+      if let waiter = activationWaiter {
+        NotificationCenter.default.removeObserver(waiter)
+        activationWaiter = nil
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + touchSettleDelay + seconds) {
+        gate.durationElapsed(token)
+      }
+    }
+
+    // A launcher that never launches is the worst failure this code has, and an
+    // activation that never arrives would be exactly that. Generous, because it
+    // only ever runs when the notification did not: normal foregrounding is
+    // well under a second.
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds + 3) { gate.durationElapsed(token) }
+  }
+
+  private static var activationWaiter: NSObjectProtocol?
 
   /// The cover itself, listening for a finger.
   ///
@@ -453,9 +767,70 @@ enum QuoteScreen {
   ///
   /// Nothing in `fill` takes touches (labels and stacks do not by default), so
   /// every touch on the cover reaches this.
+  /// The cover's own window, listening at the lowest level UIKit offers.
+  ///
+  /// `CoverView` covers the ordinary case and misses two. A touch that
+  /// hit-tests to something other than the root view never reaches its
+  /// callbacks. And a finger that lands during the app-switch animation and
+  /// then STAYS PUT produces no `touchesBegan` here (it began while the home
+  /// screen still owned it) and no `touchesMoved` either, because nothing
+  /// moved: measured on a real relay, not one event arrived in the whole
+  /// second and a half while a thumb sat on the glass.
+  ///
+  /// `sendEvent` sees every event routed to this window before any of that
+  /// dispatch happens, and `allTouches` carries touches in the `.stationary`
+  /// phase, which is precisely the finger nothing else can see.
+  private final class CoverWindow: UIWindow {
+    override func sendEvent(_ event: UIEvent) {
+      super.sendEvent(event)
+      // Only while a handoff is actually pending. Once the relay is over this
+      // same window carries the return card, and a tap on its Share button is
+      // not a statement about any launch.
+      guard QuoteScreen.relayInFlight else { return }
+      guard let touches = event.allTouches, !touches.isEmpty else { return }
+      // Down if ANY touch is still on the glass. The gate collapses repeats,
+      // so calling this on every event is free.
+      let down = touches.contains { $0.phase != .ended && $0.phase != .cancelled }
+      if down {
+        QuoteScreen.gate.press()
+      } else {
+        QuoteScreen.gate.release()
+      }
+    }
+  }
+
   private final class CoverView: UIView {
+    /// The window resizes its root view for us, but the shade copy in `show`
+    /// relies on this and a rotation should never leave a dead strip that eats
+    /// nothing and hands off nothing.
+    override init(frame: CGRect) {
+      super.init(frame: frame)
+      autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not from a nib") }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesBegan(touches, with: event)
+      QuoteScreen.gate.press()
+    }
+
+    /// A finger that was ALREADY DOWN when the cover became touchable.
+    ///
+    /// The relay arrives during the app-switch animation, and for the first
+    /// stretch of it the touch belongs to the home screen: a measured 0.42s
+    /// before this app sees anything at all. Someone who taps a row and puts
+    /// their thumb straight back down is inside that window, so `touchesBegan`
+    /// for their press never arrives here.
+    ///
+    /// A resting finger is never still, though. If UIKit hands the ongoing
+    /// touch over once delivery starts, it arrives as movement rather than as
+    /// a beginning, and that is the only signal this case leaves behind.
+    /// Treating it as a press costs nothing when a normal `touchesBegan` came
+    /// first, because holding is idempotent.
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+      super.touchesMoved(touches, with: event)
       QuoteScreen.gate.press()
     }
 
@@ -485,10 +860,44 @@ enum QuoteScreen {
     completion()
   }
 
-  /// CADisplayLink retains its target, so the enum cannot be one.
-  private final class Proxy: NSObject {
+  /// CADisplayLink retains its target, so the enum cannot be one. The host
+  /// window's recogniser needs an NSObject target and a delegate too, and this
+  /// is already the file's one long-lived object.
+  private final class Proxy: NSObject, UIGestureRecognizerDelegate {
     static let shared = Proxy()
+
     @objc func tick() { QuoteScreen.tick() }
+
+    @objc func copyCard() { QuoteScreen.copyCard() }
+    @objc func shareCard() { QuoteScreen.shareCard() }
+
+    /// The way out of the card, and the only one that matters: after this the
+    /// cover is gone and the user is in the app they asked for.
+    @objc func dismissCard() {
+      QuoteScreen.dismiss()
+    }
+
+    @objc func hostTouch(_ recognizer: UILongPressGestureRecognizer) {
+      // Only while a cover is actually up. Outside a relay this window is the
+      // ordinary app and a tap on it means nothing to the gate.
+      guard QuoteScreen.window != nil else { return }
+      switch recognizer.state {
+      case .began, .changed:
+        QuoteScreen.gate.press()
+      case .ended, .cancelled, .failed:
+        QuoteScreen.gate.release()
+      default:
+        break
+      }
+    }
+
+    /// Never take a touch away from anything else. React Native's own
+    /// recognisers, the scroll views and every button in the app keep working
+    /// exactly as before; this one only listens.
+    func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+      true
+    }
   }
 
   // MARK: - Content

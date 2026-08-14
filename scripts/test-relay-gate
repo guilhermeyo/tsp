@@ -12,6 +12,7 @@ trap 'rm -rf "$out"' EXIT
 
 swiftc -O \
   "$root/ios/SimplePhone/RelayGate.swift" \
+  "$root/ios/SimplePhone/RelayReturn.swift" \
   "$root/scripts/relay-gate-tests.swift" \
   -o "$out/relay-gate-tests"
 

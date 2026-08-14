@@ -2603,8 +2603,8 @@ SPEC CHECKSUMS:
   ExpoUI: 5fe3fc059ce726bc3ddabaef03a4aeada007bf32
   ExpoWebBrowser: 9b98d939d5f1c5dd8f523f0a0683056fb1204434
   FBLazyVector: 3c3be9a019176b5699455f7f66c5444b78a411c6
-  hermes-engine: 020787ae29670e58f95088c0eaa98c0d46433525
-  LauncherNative: d64d16505df9902eae99a662ef5c80130f4e55bf
+  hermes-engine: c5dd12d31f55aba3ab62db24c609650a33f7f1a0
+  LauncherNative: ae7a246d20d6f0cea6a861ad367d9b0e01f39102
   RCTDeprecation: bccb6545c26db881ecddfd83a3f9ea82aba1605f
   RCTRequired: b2f74764d596fc0051f00fee94b49bf41a6f7f5a
   RCTSwiftUI: c6d6a31b849b9dfa64c33b55dc91ac15dd55774c

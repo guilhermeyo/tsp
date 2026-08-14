@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description    = 'Local Expo module backing the Simple Phone launcher: reads and writes the shared launcher_config JSON, reloads WidgetKit timelines, and resolves SwiftUI font designs to concrete families.'
   s.license        = 'MIT'
   s.author         = 'Guilherme Yamakawa de Oliveira'
-  s.homepage       = 'https://github.com/guilhermeyo/simple-phone-rn'
+  s.homepage       = 'https://github.com/guilhermeyo/tsp'
   # Matches the app's deploymentTarget in app.json (expo-build-properties).
   s.platforms      = { :ios => '17.0' }
   s.swift_version  = '5.9'
