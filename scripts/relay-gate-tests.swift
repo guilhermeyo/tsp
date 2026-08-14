@@ -1,0 +1,239 @@
+// Tests for RelayGate, the rule that decides when the relay hands off.
+//
+// The native half of this repo has no XCTest target, and adding one means
+// surgery on a committed pbxproj for a type with no UIKit in it. So this runs
+// the real `ios/SimplePhone/RelayGate.swift` directly:
+//
+//     ./scripts/test-relay-gate
+//
+// Every case below is something a finger can actually do to the cover. Time is
+// never real here: `durationElapsed(_:)` is the tick, called by hand, which is
+// the whole reason the gate owns no timer.
+
+import Foundation
+
+@main
+enum RelayGateTests {
+  static var failures = 0
+
+  static func check(_ condition: Bool, _ what: String) {
+    if condition {
+      print("  ok    \(what)")
+    } else {
+      print("  FAIL  \(what)")
+      failures += 1
+    }
+  }
+
+  /// The duration ran out and nobody was touching the screen. The ordinary relay.
+  static func testOpensWhenDurationRunsOut() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    check(opened == 0, "armed alone does not open")
+    gate.durationElapsed(token)
+    check(opened == 1, "the duration running out opens the target")
+  }
+
+  /// Instant, where the caller ticks on the very next runloop turn.
+  ///
+  /// Honest about what this proves and what it does not. It proves the GATE
+  /// holds when a press has already been delivered, which is the whole of its
+  /// job. It cannot prove UIKit delivers that press in time, because the window
+  /// at zero is the app-switch animation and the app is barely interactive
+  /// through it. Short or Medium is where holding is actually comfortable; this
+  /// case exists so that zero is not additionally broken on top of being tight.
+  static func testInstantStillFreezesUnderAFinger() {
+    let gate = RelayGate()
+    var opened = 0
+    gate.press()
+    let token = gate.arm { opened += 1 }
+    gate.durationElapsed(token)
+    check(opened == 0, "a finger already down holds the target back at zero duration")
+    gate.release()
+    check(opened == 1, "lifting it hands off")
+  }
+
+  /// A press partway through the chosen duration.
+  static func testPressDuringTheDurationHolds() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.press()
+    check(opened == 0, "pressing during the duration does not open")
+    gate.durationElapsed(token)
+    check(opened == 0, "the duration running out while held does not open")
+    gate.release()
+    check(opened == 1, "releasing after the duration opens")
+  }
+
+  /// Holding then letting go hands off at once rather than serving out the rest
+  /// of a four second wait: the finger replaces the timer, it does not queue
+  /// behind it.
+  static func testReleaseBeatsTheClock() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.press()
+    gate.release()
+    check(opened == 1, "releasing opens before the duration has run out")
+    gate.durationElapsed(token)
+    check(opened == 1, "the late tick does not open a second time")
+  }
+
+  /// The touch was cancelled rather than lifted: a call arrived, or the user
+  /// swiped away mid-press. A launcher that launches nothing is worse than one
+  /// that shows its list, so cancellation has to hand off like a release.
+  static func testCancelledTouchStillHandsOff() {
+    let gate = RelayGate()
+    var opened = 0
+    gate.arm { opened += 1 }
+    gate.press()
+    gate.cancelPress()
+    check(opened == 1, "a cancelled touch hands off like a release")
+  }
+
+  /// Fingers do not always come in pairs.
+  static func testUnbalancedTouches() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.press()
+    gate.press()
+    gate.durationElapsed(token)
+    gate.release()
+    check(opened == 1, "a repeated press still opens on the first release")
+  }
+
+  /// A `touchesEnded` with no `touchesBegan` behind it. The gate is a singleton
+  /// that outlives any one cover, so a release belonging to nothing must not
+  /// leave the next relay primed to hand off on sight.
+  static func testStrayReleaseDoesNotPrimeTheNextRelay() {
+    let gate = RelayGate()
+    gate.release()
+
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    check(opened == 0, "a stray release does not open the relay that follows it")
+    gate.durationElapsed(token)
+    check(opened == 1, "and that relay still opens exactly once on its own tick")
+  }
+
+  /// THE ORPHAN TICK, and the reason a cycle has an identity at all.
+  ///
+  /// Relay 1 hands off early because a thumb let go, so the timer it scheduled
+  /// is still out there with nothing to do. Relay 2 arms while that tick is in
+  /// flight. Without a token the stale tick satisfies the NEW relay and cuts its
+  /// cover short, which is the exact opposite of what holding is for.
+  static func testOrphanTickCannotOpenTheNextRelay() {
+    let gate = RelayGate()
+    var first = 0, second = 0
+
+    let firstToken = gate.arm { first += 1 }
+    gate.press()
+    gate.release()
+    check(first == 1, "relay one handed off on the release")
+
+    let secondToken = gate.arm { second += 1 }
+    gate.durationElapsed(firstToken)
+    check(second == 0, "relay one's stale tick does not open relay two")
+
+    gate.durationElapsed(secondToken)
+    check(second == 1, "relay two opens on its own tick")
+  }
+
+  /// A press that lands BEFORE the relay is armed.
+  ///
+  /// `arm` used to clear the due flag unconditionally, which threw that press
+  /// away: releasing then handed off nothing and the user sat through the whole
+  /// duration with their thumb off the glass. A finger already on the cover is
+  /// a statement that the wait is over, and arming must not forget it.
+  static func testPressBeforeArmSurvivesTheArm() {
+    let gate = RelayGate()
+    var opened = 0
+    gate.press()
+    gate.arm { opened += 1 }
+    check(opened == 0, "still held after arming")
+    gate.release()
+    check(opened == 1, "releasing hands off without waiting for the tick")
+  }
+
+  /// The cover came down with a finger still on it and no cancellation ever
+  /// arrived. If `reset` forgot to lift that finger, every relay afterwards
+  /// would be held by a thumb that is not there: a launcher that never
+  /// launches, which is the worst failure this code has.
+  static func testResetLiftsAStuckFinger() {
+    let gate = RelayGate()
+    gate.arm {}
+    gate.press()
+    gate.reset()
+
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.durationElapsed(token)
+    check(opened == 1, "a relay after a reset opens with no extra touch")
+  }
+
+  /// Touching after the target was already asked to open changes nothing. The
+  /// open is not cancellable once requested, and the gate must not pretend so.
+  static func testPressAfterHandoffDoesNothing() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.durationElapsed(token)
+    check(opened == 1, "opened on time")
+    gate.press()
+    gate.release()
+    check(opened == 1, "a press after the handoff does not open again")
+  }
+
+  /// The cover came down for good, so anything still owed is stale: the user is
+  /// back in the app and the target they picked is no longer wanted.
+  static func testResetForgetsAHeldOpen() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.press()
+    gate.reset()
+    gate.release()
+    gate.durationElapsed(token)
+    check(opened == 0, "reset forgets a held open")
+  }
+
+  /// A second relay after a reset works from scratch.
+  static func testRelayAfterResetOpens() {
+    let gate = RelayGate()
+    var first = 0
+    let firstToken = gate.arm { first += 1 }
+    gate.durationElapsed(firstToken)
+    gate.reset()
+    var second = 0
+    let secondToken = gate.arm { second += 1 }
+    gate.durationElapsed(secondToken)
+    check(first == 1 && second == 1, "a fresh relay after a reset opens")
+  }
+
+  static func main() {
+    testOpensWhenDurationRunsOut()
+    testInstantStillFreezesUnderAFinger()
+    testPressDuringTheDurationHolds()
+    testReleaseBeatsTheClock()
+    testCancelledTouchStillHandsOff()
+    testUnbalancedTouches()
+    testStrayReleaseDoesNotPrimeTheNextRelay()
+    testOrphanTickCannotOpenTheNextRelay()
+    testPressBeforeArmSurvivesTheArm()
+    testResetLiftsAStuckFinger()
+    testPressAfterHandoffDoesNothing()
+    testResetForgetsAHeldOpen()
+    testRelayAfterResetOpens()
+
+    print("")
+    if failures == 0 {
+      print("relay gate: all cases pass")
+      exit(0)
+    }
+    print("relay gate: \(failures) failing")
+    exit(1)
+  }
+}

@@ -90,6 +90,12 @@ Twenty phrases ship per language, each attributed, each drawn from that language
 rather than translated from English. You can add your own, and yours are never touched when you
 switch languages.
 
+**Hold the screen and the phrase stays.** Press anywhere while it is up and the handoff waits; lift
+your thumb and you go. It is worth setting a duration of Short or longer to use this: at Instant the
+phrase is only on screen for the app-switch animation, and there is barely a window for a finger to
+land in. The rule lives in `ios/SimplePhone/RelayGate.swift` and is the one native thing here with
+its own test suite.
+
 ## Project layout
 
 ```

@@ -230,6 +230,20 @@ Rules that keep it useful:
 `"types": ["jest", "node"]` in `tsconfig.json` is load-bearing: without it the
 test globals do not resolve and `npx tsc --noEmit` fails on every suite.
 
+### The one native suite
+
+```bash
+./scripts/test-relay-gate
+```
+
+`jest-expo` cannot load Swift and the app target has no XCTest bundle, so this
+compiles `ios/SimplePhone/RelayGate.swift` itself against
+`scripts/relay-gate-tests.swift` and runs the cases. **`npm test` does not run
+it.** Run it by hand whenever you touch the relay, the cover or the gate.
+
+`RelayGate` may only ever import Foundation. A single `import UIKit` in that
+file deletes the native half's only executable test, and nothing will tell you.
+
 Full Xcode.app is required. Command Line Tools alone cannot build an iOS app.
 
 **The simulator cannot test tap-to-open.** Third-party schemes fail there with

@@ -54,6 +54,10 @@ enum QuoteScreen {
   /// with no error anywhere.
   private static let quoteStatsKey = "quote_stats"
 
+  /// Holds the handoff while a finger is on the cover. See `RelayGate` for the
+  /// rule and `scripts/test-relay-gate` for what it is required to do.
+  private static let gate = RelayGate()
+
   /// Its own window rather than a view controller pushed into the app's.
   /// On a cold launch there is no root view controller to present from yet, and
   /// a separate window at a higher level is also what keeps the phrase above
@@ -168,6 +172,10 @@ enum QuoteScreen {
   /// phrase over the list.
   static func dismiss() {
     guard !relayInFlight else { return }
+    // Before anything else: the cover is going away, so a handoff still owed to
+    // a finger that is no longer there must not fire into an app the user has
+    // already come back from.
+    gate.reset()
     frameLink?.invalidate()
     frameLink = nil
     framesLeft = 0
@@ -222,6 +230,11 @@ enum QuoteScreen {
     overlay.windowLevel = .statusBar + 2
 
     let controller = UIViewController()
+    // ALWAYS, including the snapshot path. A warm relay does not build a new
+    // cover: it keeps the one the last backgrounding left standing, so the
+    // window created with `forSnapshot: true` is the very one the user's finger
+    // lands on in the common case. Only the `shade` copy below stays inert.
+    controller.view = CoverView(frame: overlay.bounds)
     fill(controller.view, config: config, phrase: phrase)
     overlay.backgroundColor = controller.view.backgroundColor
     overlay.rootViewController = controller
@@ -392,6 +405,69 @@ enum QuoteScreen {
     // be worse than a visible list, it would be a launcher that launches
     // nothing.
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { fire() }
+  }
+
+  // MARK: - Holding the cover under a finger
+
+  /// Hands off after `seconds`, unless a finger is on the cover.
+  ///
+  /// Replaces a bare `asyncAfter(open)` at the call site, and the difference is
+  /// the whole feature: the wait still runs on a timer, but the decision to
+  /// leave is taken by the gate at the moment the timer lands, so a touch that
+  /// arrived in the meantime is seen.
+  ///
+  /// ZERO IS NOT A SPECIAL CASE, and that is the point. "Instant" still shows
+  /// the phrase, because the cover is what the user is looking at during the
+  /// app-switch animation whatever the duration says. Ticking synchronously
+  /// keeps that path exactly as fast as it was while still asking the gate,
+  /// which is what lets a finger that landed during the animation freeze it.
+  ///
+  /// The timer is never cancelled, it is STAMPED. A press and release can hand
+  /// off long before the timer lands, and the tick left over from that relay
+  /// would otherwise satisfy the NEXT one and cut its cover short. Carrying the
+  /// token the gate handed out is what makes the stale tick a no-op, and it
+  /// beats a `DispatchWorkItem` because there is nothing to hold, cancel or
+  /// leak.
+  ///
+  /// The instant path takes one runloop hop rather than ticking inline. That is
+  /// not a delay anyone can perceive, and it is the only thing standing between
+  /// this feature and being unreachable at zero: touch delivery happens between
+  /// runloop turns, so ticking synchronously guarantees no finger is ever seen.
+  /// It still costs nothing when nobody is touching, which is the rule about an
+  /// off switch never charging for itself.
+  static func scheduleOpen(after seconds: TimeInterval, _ open: @escaping () -> Void) {
+    let token = gate.arm(open)
+    guard seconds > 0 else {
+      DispatchQueue.main.async { gate.durationElapsed(token) }
+      return
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { gate.durationElapsed(token) }
+  }
+
+  /// The cover itself, listening for a finger.
+  ///
+  /// Raw touch callbacks rather than a `UILongPressGestureRecognizer` with a
+  /// zero minimum duration: a recognizer has to decide it has recognised
+  /// something, and on the instant path there is no time to spare for that.
+  /// `touchesBegan` arrives with the event.
+  ///
+  /// Nothing in `fill` takes touches (labels and stacks do not by default), so
+  /// every touch on the cover reaches this.
+  private final class CoverView: UIView {
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+      super.touchesBegan(touches, with: event)
+      QuoteScreen.gate.press()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+      super.touchesEnded(touches, with: event)
+      QuoteScreen.gate.release()
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+      super.touchesCancelled(touches, with: event)
+      QuoteScreen.gate.cancelPress()
+    }
   }
 
   fileprivate static func tick() {
