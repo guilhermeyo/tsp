@@ -1,18 +1,197 @@
-# Simple Phone
+# The Simple Phone (TSP)
 
-A calm home-screen launcher for iPhone: a list of app names as plain text, no icons, no badges, no
-grid. You tap a name, the app it points at opens. That is the whole product.
+A calm home-screen launcher for iPhone. Your apps become a list of names in plain text. No icons, no
+badges, no grid. You tap a name, the app it points at opens. That is the whole product.
 
-This repo is one Expo project that produces two things:
+<p align="center">
+  <img src="docs/screenshots/home.png" width="300" alt="Home screen: a weather strip above a list of app names in plain text">
+</p>
 
-- **Simple Phone**, an iOS app written in React Native / TypeScript. It is the editor: add apps,
-  reorder them, delete them, and change how the widget looks.
-- **SimplePhoneWidget**, a WidgetKit extension written in SwiftUI. It is the product surface: the
-  list that actually sits on your home screen.
+<p align="center"><em>The home screen. Two widgets, no icons, no badges.</em></p>
 
-They are two separate processes that never talk to each other directly. The only channel between
-them is a shared `UserDefaults` suite (an App Group) holding one JSON string. Everything in this
-README is downstream of that fact.
+## Why this exists
+
+I wanted a dumber phone, not a different one. The stock home screen is a grid of coloured squares
+competing for attention, and the apps I actually use every day are five of them. Everything else is
+noise I scroll past.
+
+There are paid apps that do this. I looked at one, decided the licence cost more than the idea was
+worth to me, and noticed I would use maybe a third of what it shipped. So I built the third I wanted.
+
+That is the honest origin: this is a personal tool that turned out to be worth publishing. It is
+going to the App Store, and the source is here either way.
+
+## Why React Native
+
+This app was going to be Swift. The original version, in fact, was: there is a companion repo where
+the whole thing is SwiftUI, and this is a rebuild.
+
+I changed my mind because I wanted the exercise. My daily work is Ruby, Rails and React, and it had
+been years since I wrote anything in React Native. I wanted to see what the framework had become
+rather than what I remembered it being. Picking a real app with a real deadline, instead of a toy,
+is the only way that question gets an honest answer.
+
+The answer, so far: the JavaScript half is genuinely pleasant, and everything that touches the
+system is still native. Which is why roughly a third of this repo is Swift, and why the widget was
+never going to be anything else.
+
+## The two halves
+
+This is one Expo project that produces two things:
+
+- **The Simple Phone**, an iOS app in React Native and TypeScript. It is the editor. Add apps,
+  reorder them, delete them, change the type, set the weather city, write your own phrases.
+- **SimplePhoneWidget**, a WidgetKit extension in SwiftUI. It is the product surface. The list that
+  actually sits on your home screen, plus the weather strip.
+
+They are separate processes that never talk to each other directly. The only channel between them is
+a shared `UserDefaults` suite (an App Group) holding one JSON string. Most of the hard-won detail in
+this README is downstream of that single fact.
+
+## The app
+
+The app is the editor, and it is deliberately boring. Everything it does ends as one JSON string in
+a shared container that the widget reads.
+
+<p align="center">
+  <img src="docs/screenshots/hub.png" width="240" alt="Hub screen listing Apps, Weather, Phrases, Appearance and Language">
+  <img src="docs/screenshots/apps.png" width="240" alt="Apps screen with a live preview above a reorderable list">
+  <img src="docs/screenshots/phrases.png" width="240" alt="Phrases screen with the enable switch, durations and the attributed list">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/weather.png" width="240" alt="Weather screen with a forecast preview, city search and unit toggle">
+  <img src="docs/screenshots/language.png" width="240" alt="Language screen offering Portuguese, English, Spanish and Japanese">
+</p>
+
+The **Apps** screen puts a live preview of the widget directly above the list you are editing, so
+reordering is a direct-manipulation act rather than a guess followed by a home-screen check.
+
+The **Weather** strip is optional and asks for nothing. It never requests your location. You type a
+city, and what gets stored is a name and a rounded pair of coordinates. Data comes from
+[Open-Meteo](https://open-meteo.com), CC BY 4.0, attributed in the app.
+
+**Language** changes four things at once: the interface, the bundled app names, the bundled phrases,
+and the weekday names in the weather widget. The bundled app names are localised rather than fixed,
+because a launcher row that does not read the way your home screen reads has to be translated in your
+head every time you look at it. Anything you renamed stays yours and never moves.
+
+## The phrase between the taps
+
+Tapping a widget row cannot open a third party app directly. iOS will not allow it. The tap has to
+land in the host app first, which then forwards you on. That round trip is visible, and there is no
+way to hide it.
+
+So instead of apologising for the flash, the app fills it. Every hop shows a phrase, held for as long
+as you choose, and then you arrive where you were going. A limitation of the platform became the one
+moment of stillness in the launch.
+
+Twenty phrases ship per language, each attributed, each drawn from that language's own tradition
+rather than translated from English. You can add your own, and yours are never touched when you
+switch languages.
+
+## Project layout
+
+```
+app.json                  JS-side config only: scheme, name, router, build properties.
+ios/                      the Xcode project. TWO TARGETS. COMMITTED SOURCE, not output.
+  SimplePhone/            the app target: AppDelegate, Info.plist, entitlements, the relay.
+  SimplePhoneWidget/      the WidgetKit extension: launcher list, weather, timeline provider.
+modules/launcher-native/  a local Expo module in Swift. The config bridge.
+src/
+  app/                    screens (expo-router).
+  components/             shared views.
+  domain/                 pure logic: quotes, deep links, bundled defaults, weather codes.
+  i18n/                   four languages, interface strings included.
+  store/                  the config store and the JSON contract with Swift.
+  theme/                  fonts and sizing tables.
+docs/native-notes.md      the teaching document for the native half.
+scripts/                  brand asset generation.
+AGENTS.md                 the rules file. Read it before writing code here.
+```
+
+Two things about this layout are unusual and deliberate:
+
+**`ios/` is committed source, not generated output.** That is the opposite of a default Expo project.
+It is why `npx expo prebuild` must never run here, and it has its own section below.
+
+**The widget is Swift and always will be.** WidgetKit has no JavaScript runtime. There is no version
+of this where the home-screen surface is written in TypeScript, and no library that changes that.
+Also below.
+
+## Technical decisions, in one list
+
+Each of these has a full section further down explaining the reasoning and what breaks if you get it
+wrong. They are the parts worth reading before changing anything.
+
+| Decision | Short version |
+| --- | --- |
+| Widget in SwiftUI | WidgetKit runs no JS. Not a preference, a constraint. |
+| Bare project | `ios/` is committed. `prebuild` would delete it without asking. |
+| The relay | A widget tap goes to the host app first, then forwards. Nothing avoids this. |
+| Own URL scheme | `simplephonern`, not `simplephone`, so the Swift original can coexist. |
+| Config as a JSON string | Never object bridging. Bridging coerces `true` to `1` and Swift then throws away every app you added, silently. |
+| App Group id in two files | Byte identical, or signing fails with an unrelated error. |
+| Widget `kind` string frozen | Renaming it blanks every widget already placed, permanently, with no migration API. |
+
+## Tests
+
+`npx tsc --noEmit` and `npm test` both have to be clean before anything is called done. TypeScript is
+strict, with no `any` and no `@ts-ignore`.
+
+There are 257 tests, and the suite has an opinion about what deserves one. Everything worth testing
+here is a pure function, and the coverage concentrates on the four places where being wrong is
+**silent** rather than loud:
+
+| Under test | What it costs to get wrong |
+| --- | --- |
+| the config decoder | every app you added, with no error anywhere |
+| language switching | every phrase you wrote, with no undo |
+| deep link parsing | a widget tap that opens nothing, or the wrong thing |
+| quote stats parsing | a settings screen that crashes on a stale blob |
+
+Three rules keep it useful:
+
+- **Test the failure, not the happy path.** Almost every case in the decoder suite is malformed
+  input, because malformed input is what actually reaches that code.
+- **Prove the test bites.** Before trusting one that guards data, run it against a wrong
+  implementation and watch it go red. The language switcher has three plausible wrong versions, and
+  all three fail the suite.
+- **Fixtures go through a decode.** A quote loaded from disk is never the same object as the bundled
+  one it came from, so a fixture that reuses bundled references passes tests a real device fails.
+
+## Roadmap
+
+- **App Store submission**, in the next few days. The blockers are documented under "App Store risk"
+  below, and `App-Prefs://` has to come out of the shipped defaults first.
+- **Phrase surface as a place for a sponsor slot.** The hop already holds your attention for a
+  second; if this ever carries advertising, that is where it goes, and a paid tier removes it. Not
+  built, not decided, written down so the intent is public.
+- **More languages**, if people want them. The interface, the bundled app names and the phrase
+  catalogue are all localised already, so adding one is data, not code.
+
+## Contributing
+
+Suggestions are welcome, including "this is the wrong way to do it". Open an issue before a large
+pull request so we can agree on the shape first.
+
+Two things to read before writing code:
+
+- **`AGENTS.md`** is the rules file. It lists the four ways to silently destroy user data in this
+  codebase, and every one of them has already happened once.
+- **`docs/native-notes.md`** explains the native half: WidgetKit lifecycle, `TimelineProvider`, what
+  an Expo local module actually is, and what "bare vs CNG" means.
+
+House style: English everywhere, Conventional Commits, no emojis. Comment the native side
+generously and obvious TypeScript not at all. The point of the Swift in this repo is to be readable
+by someone learning it.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+You can read it, fork it, learn from it and ship your own. The App Store build is mine to publish,
+and the source is yours to use.
 
 ---
 
@@ -466,7 +645,8 @@ Two things that are still true and worth knowing:
 
 ## App Store risk
 
-This project is not currently submitted anywhere. If that changes, read this first.
+Submission is imminent, so this section is a checklist rather than a hypothetical. Everything
+below has to be settled before the build goes up.
 
 **`App-Prefs://` in `src/domain/bundledDefaults.ts` is a documented Guideline 2.5.1 rejection
 trigger.** It is a private URL scheme. It works, it has worked for years, and Apple rejects apps for
