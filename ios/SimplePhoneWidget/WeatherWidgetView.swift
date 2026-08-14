@@ -76,6 +76,10 @@ struct WeatherWidgetView: View {
                 // `.light` is what matches the thin outline drawing.
                 .font(.system(size: metrics.symbol, weight: .light))
                 .foregroundStyle(theme.textColor)
+                // Every column gets the same glyph box, so the temperatures
+                // below share one baseline no matter which symbol landed here.
+                // See `ColumnMetrics.symbolBox`.
+                .frame(height: metrics.symbolBox)
 
             Text(temperature(for: day, isToday: isToday, snapshot: snapshot))
                 .font(theme.font.font(size: metrics.temperature))
@@ -187,6 +191,23 @@ private struct ColumnMetrics {
     let symbol: CGFloat
     let temperature: CGFloat
     let spacing: CGFloat
+
+    /// A UNIFORM BOX for the glyph, and the whole reason the strip lines up.
+    ///
+    /// SF Symbols do not share a bounding box. `cloud.bolt.rain` is visibly
+    /// taller than `cloud.sun.rain`, and `sun.max` shorter than both, so a
+    /// column that lets the image size itself pushes its temperature to a
+    /// different baseline than the column beside it. Five columns, five
+    /// baselines — which is what "não tá alinhado, tá estranho" looks like.
+    ///
+    /// Only the SYMBOL needs pinning: the weekday and the temperature are text
+    /// at a fixed size, so they align on their own once the row above them
+    /// stops changing height.
+    ///
+    /// 1.35x is measured, not chosen: the tallest symbol in the condition set
+    /// (`cloud.bolt.rain`) occupies about 1.3x its point size, and the extra
+    /// 0.05 keeps it off the edge of the box at every text size.
+    var symbolBox: CGFloat { (symbol * 1.35).rounded() }
 
     static func forSize(_ size: TextSize) -> ColumnMetrics {
         switch size {
