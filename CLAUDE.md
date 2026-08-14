@@ -35,5 +35,7 @@ All four are explained in `AGENTS.md`.
 - Comment the native side generously and the obvious TypeScript not at all. The point of this repo
   is learning the native half.
 - This is a child of the **lifestyle** meta-repo: default branch `master`, commits via
-  `/life:commit`, Conventional Commits, no emojis, no AI mentions, no `Co-Authored-By`.
+  `/life:commit`, Conventional Commits, no emojis, no AI attribution, no `Co-Authored-By`. Commits
+  and code carry no AI credit at all; `README.md` and `docs/` may write about AI as a subject. See
+  "Code rules" in `AGENTS.md`.
 - Do not commit or push without explicit approval.
