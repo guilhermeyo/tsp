@@ -332,22 +332,46 @@
     "en": {
       "title": "Could not open this",
       "body": "iOS refused to open:\n\n%@\n\nNo installed app handles it, or the scheme changed.",
-      "ok": "OK"
+      "ok": "OK",
+      "shownOnce": "shown once",
+      "shownTimes": "shown %@ times",
+      "openApp": "Open The Simple Phone",
+      "copy": "Copy",
+      "share": "Share",
+      "copied": "Copied"
     },
     "pt-BR": {
       "title": "Não foi possível abrir",
       "body": "O iOS recusou abrir:\n\n%@\n\nNenhum app instalado abre isso, ou o esquema mudou.",
-      "ok": "OK"
+      "ok": "OK",
+      "shownOnce": "apareceu uma vez",
+      "shownTimes": "apareceu %@ vezes",
+      "openApp": "Abrir o The Simple Phone",
+      "copy": "Copiar",
+      "share": "Compartilhar",
+      "copied": "Copiado"
     },
     "es": {
       "title": "No se pudo abrir",
       "body": "iOS se negó a abrir:\n\n%@\n\nNinguna app instalada lo abre, o el esquema cambió.",
-      "ok": "OK"
+      "ok": "OK",
+      "shownOnce": "apareció una vez",
+      "shownTimes": "apareció %@ veces",
+      "openApp": "Abrir The Simple Phone",
+      "copy": "Copiar",
+      "share": "Compartir",
+      "copied": "Copiado"
     },
     "ja": {
       "title": "開けませんでした",
       "body": "対応するアプリがないか、URLスキームが変わったため、iOSは次を開けませんでした。\n\n%@",
-      "ok": "OK"
+      "ok": "OK",
+      "shownOnce": "1回表示",
+      "shownTimes": "%@回表示",
+      "openApp": "The Simple Phone を開く",
+      "copy": "コピー",
+      "share": "共有",
+      "copied": "コピーしました"
     }
   }
 }

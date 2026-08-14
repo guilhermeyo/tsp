@@ -90,6 +90,23 @@ Twenty phrases ship per language, each attributed, each drawn from that language
 rather than translated from English. You can add your own, and yours are never touched when you
 switch languages.
 
+**Hold the screen and the phrase stays.** Press anywhere while it is up and the handoff waits; lift
+your thumb and you go. The rule lives in `ios/SimplePhone/RelayGate.swift` and is the one native
+thing here with its own test suite.
+
+Holding is a race you can lose, and losing it is normal. iOS delivers no touch at all to the app for
+roughly the first 400 milliseconds of a widget tap: the phrase you are looking at in that stretch is
+a snapshot the system is replaying, and your finger belongs to the home screen. Measured across
+eleven real taps, the earliest touch the app ever saw was 420ms in. The duration you pick is counted
+from when touches actually start arriving, so the number means what it says, but a thumb that lands
+on reflex is still too early.
+
+**So the line waits for you.** Miss it, and the `TSP` breadcrumb iOS puts in the status bar brings
+back the phrase you did not finish, with how many times it has come up and a way into the app.
+Copy it, or share it as an image drawn without the count and without the button: just the line, who
+said it, and a small wordmark. The rule for when that card is offered lives in
+`ios/SimplePhone/RelayReturn.swift`, next to the gate and tested the same way.
+
 ## Project layout
 
 ```

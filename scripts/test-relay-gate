@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs the RelayGate cases against the real source file the app compiles.
+#
+# Not part of `npm test`: that suite is jest-expo and cannot load Swift. This is
+# the native half's only executable test, so run it by hand when touching the
+# relay, and see scripts/relay-gate-tests.swift for what it covers.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+out="$(mktemp -d)"
+trap 'rm -rf "$out"' EXIT
+
+swiftc -O \
+  "$root/ios/SimplePhone/RelayGate.swift" \
+  "$root/ios/SimplePhone/RelayReturn.swift" \
+  "$root/scripts/relay-gate-tests.swift" \
+  -o "$out/relay-gate-tests"
+
+"$out/relay-gate-tests"

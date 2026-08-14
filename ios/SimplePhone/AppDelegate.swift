@@ -60,13 +60,12 @@ private enum Relay {
       // On a warm relay the cover has been up since the last backgrounding, so
       // `afterPresented` fires immediately and there is no wait at all.
       QuoteScreen.afterPresented {
-        guard hold > 0 else {
-          open(target, window: window)
-          return
-        }
         // The hold is timed from the frame, not from before it, so the number
-        // the user picked is the number of seconds they actually get.
-        DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
+        // the user picked is the number of seconds they actually get. Zero is
+        // not special-cased here any more: `scheduleOpen` ticks synchronously
+        // for it, so the instant path is as fast as it ever was and still
+        // stops under a finger.
+        QuoteScreen.scheduleOpen(after: hold) {
           open(target, window: window)
         }
       }
@@ -182,7 +181,9 @@ class AppDelegate: ExpoAppDelegate {
       object: nil,
       queue: .main
     ) { _ in
-      QuoteScreen.dismiss()
+      // Not `dismiss` any more: a return that follows a handoff keeps the line
+      // on screen so a phrase nobody got to read is not simply lost.
+      QuoteScreen.activate()
     }
 
     // The other half of the fix, and the half no overlay can do on its own.

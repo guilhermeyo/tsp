@@ -1,0 +1,127 @@
+import Foundation
+
+/// Decides WHEN the relay is allowed to hand off to the target app.
+///
+/// One rule: the target opens once the chosen duration has run out AND nothing
+/// is holding the cover. A finger on the screen holds it.
+///
+/// NO UIKit AND NO TIMER, on purpose, and both are load-bearing.
+///
+/// No UIKit is what lets `scripts/test-relay-gate` compile this exact file and
+/// drive every case by hand. The app target has no XCTest bundle, so that
+/// script is the only executable test the native half of this repo has, and it
+/// only stays possible while this file imports nothing but Foundation.
+///
+/// No timer is what makes those cases deterministic. Time enters through
+/// `durationElapsed(_:)`, which the caller schedules however it likes; the gate
+/// itself has no idea how long anything took.
+///
+/// THE ORDER OF EVENTS IS NOT GUARANTEED, which is the whole reason this is a
+/// state machine rather than a cancelled `DispatchWorkItem`. At the "instant"
+/// duration there is no timer to cancel at all, and a finger that landed during
+/// the app-switch animation has already pressed before the relay is even armed.
+/// Asking "is anything holding this?" at fire time answers both for free.
+///
+/// It also means a release can arrive before the duration ever runs out. That
+/// hands off immediately: the finger REPLACES the wait rather than queueing
+/// behind it, because a person who read the line and lifted their thumb is done
+/// reading, whatever number is set in the Phrases screen.
+final class RelayGate {
+  /// Set while a touch is down on the cover. Multiple downs collapse into one:
+  /// the first release hands off, which is what a person means by letting go.
+  private var isHeld = false
+
+  /// True once the chosen duration has run out, or once a finger has landed.
+  ///
+  /// A press implies it. Holding the cover to read is a statement that the wait
+  /// is over and the handoff is now the thumb's business, so a release must not
+  /// then sit out the remainder of a four second setting.
+  private var isDue = false
+
+  /// What to run to leave. Cleared the moment it runs, which is what makes
+  /// every "does it open twice" case below a no-op rather than a guard.
+  private var open: (() -> Void)?
+
+  /// Which relay is on screen right now.
+  ///
+  /// The gate is a singleton and its caller schedules a timer it never cancels,
+  /// so a tick can outlive the relay that asked for it. That is harmless while
+  /// nothing else is owed, and NOT harmless the moment a second relay has armed:
+  /// without an identity, relay one's stale tick satisfies relay two and cuts
+  /// its cover short, which is precisely the wait this feature exists to
+  /// protect. A counter is enough, and it keeps the timer out here where the
+  /// tests can stay honest about time.
+  private var cycle = 0
+
+  /// The cover is on screen and this relay owes the user a handoff.
+  ///
+  /// Returns the token its tick must carry back. `@discardableResult` for the
+  /// caller that has no timer to schedule, on the instant path.
+  ///
+  /// `isDue` starts at whatever the finger is doing rather than at false. A
+  /// press can land BEFORE this: the cover is already up from the last
+  /// backgrounding, so the touch belongs to the relay being armed even though
+  /// it arrived first. Clearing the flag here threw that press away and left
+  /// the user's release handing off nothing.
+  @discardableResult
+  func arm(_ work: @escaping () -> Void) -> Int {
+    cycle &+= 1
+    open = work
+    isDue = isHeld
+    return cycle
+  }
+
+  /// The chosen duration ran out, for the relay identified by `token`.
+  ///
+  /// A tick from an older cycle is dropped on the floor. Harmless after the
+  /// fact in the other direction too: a tick for the CURRENT cycle that lands
+  /// once the target has already been asked to open finds nothing to run.
+  func durationElapsed(_ token: Int) {
+    guard token == cycle else { return }
+    isDue = true
+    fire()
+  }
+
+  /// A finger landed on the cover.
+  func press() {
+    isHeld = true
+    isDue = true
+  }
+
+  /// The finger lifted.
+  func release() {
+    isHeld = false
+    fire()
+  }
+
+  /// The touch was cancelled by the system rather than lifted: a call arrived,
+  /// or the user swiped away mid-press.
+  ///
+  /// Identical to a release, deliberately. A launcher that launches nothing is
+  /// a worse failure than one that shows its list, so there is no path where a
+  /// touch the user cannot end leaves the handoff owed forever.
+  func cancelPress() {
+    release()
+  }
+
+  /// The cover came down for good, so anything still owed is stale. Called from
+  /// `QuoteScreen.dismiss()`, which runs when the user is back in the app and
+  /// the target they picked is no longer wanted.
+  ///
+  /// Lifting `isHeld` is the part that matters most. If a cover came down with
+  /// a finger still on it and no cancellation ever arrived, every relay after
+  /// this one would be held back by a thumb that is not there: a launcher that
+  /// never launches, which is worse than any wrong phrase.
+  func reset() {
+    cycle &+= 1
+    isHeld = false
+    isDue = false
+    open = nil
+  }
+
+  private func fire() {
+    guard isDue, !isHeld, let work = open else { return }
+    open = nil
+    work()
+  }
+}
