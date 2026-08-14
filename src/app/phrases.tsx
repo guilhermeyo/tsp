@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 
 import { ROW_PADDING, SECTION_INSET } from '@/components/DisclosureRow';
-import { QUOTE_DURATIONS, QUOTE_DURATION_MS } from '@/domain/quotes';
+import { QUOTE_DURATIONS, QUOTE_DURATION_MS, isBundledQuote } from '@/domain/quotes';
 import { countNeverShown, parseQuoteCounts, readQuoteStatsJSON } from '@/domain/quoteStats';
 import { useStrings } from '@/i18n/useStrings';
 import { useLauncherStore } from '@/store/LauncherStore';
@@ -273,23 +273,32 @@ export default function PhrasesScreen() {
                   >
                     {count === undefined ? '' : String(count)}
                   </Text>
-                  <Pressable
-                    onPress={() => {
-                      // Leaving edit mode pointed at a line that no longer
-                      // exists would strand the form: the save would find no
-                      // anchor and silently do nothing.
-                      if (editingText === item.text) {
-                        setEditingText(null);
-                        setDraft('');
-                        setAuthor('');
-                      }
-                      store.removeQuoteAt(index);
-                    }}
-                    hitSlop={8}
-                    accessibilityLabel={s.a11yRemovePhrase(item.text)}
-                  >
-                    <SymbolView name="minus.circle.fill" size={20} tintColor="#FF453A" />
-                  </Pressable>
+                  {/* BUNDLED PHRASES HAVE NO DELETE CONTROL. They are the app's,
+                      not the user's: switching language REPLACES them wholesale,
+                      so a deletion would silently come back on the next switch
+                      and read as the app ignoring the tap. The `enabled` switch
+                      is how you turn phrases off; deleting is for the ones you
+                      wrote. Absent rather than disabled, because a greyed button
+                      invites the tap that does nothing. */}
+                  {!isBundledQuote(store.config.language, item.text) && (
+                    <Pressable
+                      onPress={() => {
+                        // Leaving edit mode pointed at a line that no longer
+                        // exists would strand the form: the save would find no
+                        // anchor and silently do nothing.
+                        if (editingText === item.text) {
+                          setEditingText(null);
+                          setDraft('');
+                          setAuthor('');
+                        }
+                        store.removeQuoteAt(index);
+                      }}
+                      hitSlop={8}
+                      accessibilityLabel={s.a11yRemovePhrase(item.text)}
+                    >
+                      <SymbolView name="minus.circle.fill" size={20} tintColor="#FF453A" />
+                    </Pressable>
+                  )}
                 </View>
               </Fragment>
             );

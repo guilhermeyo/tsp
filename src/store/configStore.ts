@@ -3,7 +3,7 @@ import * as Crypto from 'expo-crypto';
 import { LauncherNative } from '../../modules/launcher-native';
 
 import { makeBundledDefaults } from '@/domain/bundledDefaults';
-import { BUNDLED_QUOTES, QUOTE_DURATION_MS, isQuoteDuration } from '@/domain/quotes';
+import { BUNDLED_QUOTES, QUOTE_DURATION_MS, isQuoteDuration, migrateBundledQuotes } from '@/domain/quotes';
 import {
   DEFAULT_QUOTES,
   DEFAULT_THEME,
@@ -171,7 +171,16 @@ function decodeQuotes(value: unknown, language: AppLanguage): Quotes {
   return {
     enabled: typeof value.enabled === 'boolean' ? value.enabled : DEFAULT_QUOTES.enabled,
     duration: isQuoteDuration(value.duration) ? value.duration : DEFAULT_QUOTES.duration,
-    items: items.length > 0 ? items : ((didSynthesizeQuotes = true), BUNDLED_QUOTES[language].slice()),
+    // MIGRATION, on every load. A device that still holds the old 111-line
+    // catalogue gets the current twenty, and every phrase the user wrote is
+    // carried over. `migrateBundledQuotes` is idempotent and returns the SAME
+    // array when there is nothing to do, so the normal launch pays one Set
+    // build and no allocation. See its doc comment for why the "already
+    // migrated" case cannot be tracked with a flag.
+    items:
+      items.length > 0
+        ? migrateBundledQuotes(language, items)
+        : ((didSynthesizeQuotes = true), BUNDLED_QUOTES[language].slice()),
   };
 }
 

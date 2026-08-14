@@ -27,6 +27,8 @@
 import type { AppLanguage, Quote } from './types';
 
 import CATALOG from './quotes.json';
+// Migration table only — see LEGACY_BUNDLED at the bottom of this file.
+import LEGACY_CATALOG from './quotes-legacy.json';
 
 /**
  * How long the phrase is held before the target app is asked to open.
@@ -146,4 +148,79 @@ export function switchLanguageItems(
   const bundled = new Set(BUNDLED_QUOTES[from].map((quote) => quote.text));
   const written = items.filter((item) => !bundled.has(item.text));
   return [...BUNDLED_QUOTES[to], ...written];
+}
+
+/**
+ * The catalogue as it shipped BEFORE the cut to twenty attributed lines. Kept
+ * for exactly one purpose: telling a phrase the user wrote apart from one the
+ * app put there, on a device that still holds the old 111.
+ *
+ * It is not exported as content and must never be rendered. Swift never sees
+ * it either — `quotes.json` stays the shared contract, and this file is a
+ * TypeScript-only migration table.
+ */
+const LEGACY_BUNDLED: Record<AppLanguage, ReadonlySet<string>> = {
+  'pt-BR': new Set(LEGACY_CATALOG['pt-BR'].map(textOf)),
+  en: new Set(LEGACY_CATALOG.en.map(textOf)),
+  es: new Set(LEGACY_CATALOG.es.map(textOf)),
+  ja: new Set(LEGACY_CATALOG.ja.map(textOf)),
+};
+
+function textOf(entry: string | { text: string }): string {
+  return typeof entry === 'string' ? entry : entry.text;
+}
+
+/**
+ * True when this phrase is one the app supplied, so the UI can refuse to delete
+ * it. Matched on TEXT for the same reason `switchLanguageItems` is: a decoded
+ * quote is never the same OBJECT as the bundled one it was loaded from.
+ *
+ * A phrase the user typed that happens to be identical to a bundled line reads
+ * as bundled. That is the same collision `switchLanguageItems` already accepts,
+ * and the alternative — tagging every stored quote with an origin flag — would
+ * change the on-disk shape that Swift also parses.
+ */
+export function isBundledQuote(language: AppLanguage, text: string): boolean {
+  return BUNDLED_QUOTES[language].some((quote) => quote.text === text);
+}
+
+/**
+ * Brings a stored list up to the current bundled set, keeping every phrase the
+ * user wrote. Runs on load, for devices carrying the old 111-line catalogue.
+ *
+ * IDEMPOTENT BY CONSTRUCTION, which is what makes it safe to run on every load
+ * with no "have I migrated?" flag to persist and get wrong. The filter drops
+ * anything that is bundled EITHER now or before; whatever survives is the
+ * user's, and the current set is prepended whole. Filtering against the legacy
+ * list alone would duplicate the ten lines that appear in both, on the second
+ * run and every run after — the same shape of bug that once doubled this list
+ * on every launch.
+ */
+export function migrateBundledQuotes(
+  language: AppLanguage,
+  items: readonly Quote[]
+): Quote[] {
+  const current = new Set(BUNDLED_QUOTES[language].map((quote) => quote.text));
+  const legacy = LEGACY_BUNDLED[language];
+
+  // TRIGGER ON EVIDENCE, not on every load. A line that is in the OLD bundle
+  // and not in the current one is proof this device still carries the retired
+  // catalogue; without one, there is nothing to migrate and the list is
+  // returned untouched.
+  //
+  // The earlier version prepended the current bundle unconditionally, which
+  // rewrote lists that had nothing to do with the migration — including a
+  // config holding only phrases the user wrote. Decoding must return what was
+  // stored unless there is a concrete reason not to.
+  const carriesLegacy = items.some(
+    (item) => legacy.has(item.text) && !current.has(item.text)
+  );
+  if (!carriesLegacy) return items as Quote[];
+
+  // Idempotent by the same test: after this runs there is no legacy-only line
+  // left, so a second call returns early above.
+  const written = items.filter(
+    (item) => !current.has(item.text) && !legacy.has(item.text)
+  );
+  return [...BUNDLED_QUOTES[language], ...written];
 }
