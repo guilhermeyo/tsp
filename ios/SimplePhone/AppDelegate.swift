@@ -65,7 +65,7 @@ private enum Relay {
         // not special-cased here any more: `scheduleOpen` ticks synchronously
         // for it, so the instant path is as fast as it ever was and still
         // stops under a finger.
-        QuoteScreen.scheduleOpen(after: hold) {
+        QuoteScreen.scheduleOpen(after: hold, target: target) {
           open(target, window: window)
         }
       }

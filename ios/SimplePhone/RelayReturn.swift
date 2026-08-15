@@ -28,16 +28,26 @@ struct RelayReturn {
   /// WhatsApp and came back to launch something else.
   static let window: TimeInterval = 120
 
+  /// What the card is owed: the line, and the place the user was going.
+  struct Missed {
+    let phrase: String
+    /// Nil when the relay had no usable target, which cannot happen through
+    /// the widget but can through a hand-typed URL.
+    let target: URL?
+  }
+
   private var handoffAt: TimeInterval?
   private var phrase: String?
+  private var target: URL?
 
   /// The target was asked to open, and this is the line that was on screen when
   /// it happened. Recorded here rather than read back later because
   /// backgrounding rolls the NEXT phrase to paint into the snapshot, so by the
   /// time anyone comes back the stored `current` is a different line.
-  mutating func handedOff(phrase: String?, at now: TimeInterval) {
+  mutating func handedOff(phrase: String?, target: URL?, at now: TimeInterval) {
     handoffAt = now
     self.phrase = phrase
+    self.target = target
   }
 
   /// The app is being activated. Returns the line to show, or nil to behave as
@@ -45,13 +55,15 @@ struct RelayReturn {
   ///
   /// Consuming is the point: a second activation is someone opening the app to
   /// use it, not someone chasing a line they missed.
-  mutating func consume(at now: TimeInterval) -> String? {
+  mutating func consume(at now: TimeInterval) -> Missed? {
     guard let at = handoffAt else { return nil }
     let line = phrase
+    let destination = target
     handoffAt = nil
     phrase = nil
-    guard now >= at, now - at <= Self.window else { return nil }
-    return line
+    target = nil
+    guard now >= at, now - at <= Self.window, let line else { return nil }
+    return Missed(phrase: line, target: destination)
   }
 
   /// The relay ended without the app ever leaving: the target refused to open
@@ -60,6 +72,7 @@ struct RelayReturn {
   mutating func clear() {
     handoffAt = nil
     phrase = nil
+    target = nil
   }
 
   var isPending: Bool { handoffAt != nil }

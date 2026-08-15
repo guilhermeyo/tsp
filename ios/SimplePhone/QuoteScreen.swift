@@ -148,12 +148,32 @@ enum QuoteScreen {
   static func beginRelay() {
     relayInFlight = true
     relayPhrase = nil
+    clearCoverGestures()
+  }
+
+  /// Strips the recognisers a pinned cover or a return card left behind.
+  ///
+  /// The window outlives any one relay: it is only torn down when the user
+  /// comes back with nothing pending. So without this, every lock and every
+  /// card stacked another recogniser on the same view, and a pan among them
+  /// would CANCEL the touches the view was using to detect a hold. A thumb's
+  /// natural drift was enough to start the pan, which read as the finger
+  /// leaving: the ring vanished and the target opened. Holding got worse the
+  /// more the feature was used, which is the shape of a leak rather than a bug
+  /// in the hold itself.
+  ///
+  /// `cancelsTouchesInView = false` on each recogniser is the other half. Both
+  /// are here because either one alone would have hidden the other.
+  private static func clearCoverGestures() {
+    guard let root = window?.rootViewController?.view else { return }
+    root.gestureRecognizers?.forEach(root.removeGestureRecognizer)
   }
 
   /// Called the instant the target is asked to open, which is the moment the
   /// phrase becomes something the user might not have finished reading.
-  private static func recordHandoff() {
-    pendingReturn.handedOff(phrase: relayPhrase, at: Date().timeIntervalSince1970)
+  private static func recordHandoff(target: URL) {
+    pendingReturn.handedOff(phrase: relayPhrase, target: target,
+                            at: Date().timeIntervalSince1970)
   }
 
   /// The app is being activated. Either the user is coming back from a relay
@@ -201,7 +221,25 @@ enum QuoteScreen {
     let config = loadConfig()
 
     if forSnapshot {
-      let next = roll(config)
+      // A BACKGROUNDING THAT ENDS A RELAY DOES NOT ROLL.
+      //
+      // Rolling here is normally right: it is the one moment nobody is looking,
+      // so it is where a new line can appear without swapping under anyone. But
+      // when the app is leaving BECAUSE it handed off, the next foreground is
+      // most likely the user coming back for the line they missed, and rolling
+      // costs twice.
+      //
+      // It flashes: the snapshot iOS replays carries the new line, and the card
+      // then repaints with the old one, so the user watches a phrase they never
+      // asked for turn into the one they did.
+      //
+      // And it lies: rolling is what counts a line as shown. A phrase that only
+      // ever existed as a picture during someone's return would collect a tally
+      // for a reading that never happened.
+      //
+      // The line still changes. This only defers the roll until a backgrounding
+      // that is not part of a relay the user may still come back to.
+      let next = pendingReturn.isPending ? keptQuote(config) : roll(config)
       if window == nil {
         show(config, phrase: next, in: appWindow ?? hostWindow, forSnapshot: true)
       } else {
@@ -242,6 +280,10 @@ enum QuoteScreen {
     // a finger that is no longer there must not fire into an app the user has
     // already come back from.
     gate.reset()
+    clearCoverGestures()
+    fingerLeft()
+    cardPhrase = nil
+    resumeTarget = nil
     frameLink?.invalidate()
     frameLink = nil
     framesLeft = 0
@@ -276,7 +318,9 @@ enum QuoteScreen {
   /// backgrounding, so it is what the system was already replaying while the
   /// app animated back in: the line simply stays instead of being torn down,
   /// and gains a count and a way out. Nothing flashes and nothing moves.
-  private static func presentCard(_ text: String) {
+  private static func presentCard(_ missed: RelayReturn.Missed) {
+    let text = missed.phrase
+    resumeTarget = missed.target
     guard let overlay = window, let root = overlay.rootViewController?.view else { return }
     // A touch on the card is not a touch on a relay. Without this the press
     // that dismisses it would leave the gate holding, and the NEXT relay would
@@ -294,7 +338,282 @@ enum QuoteScreen {
     addCardChrome(to: root, below: stack, config: config, count: count)
     shade?.removeFromSuperview()
     shade = nil
+
+    // Swiping right means the same thing it means on a pinned cover: take me
+    // where I was going. Here that is the app the user just came BACK from,
+    // which is why the destination had to be remembered alongside the line.
+    //
+    // Swipe only, and no tap. On a pinned cover a tap is someone mid-launch
+    // carrying on; on this card it would be someone who deliberately came back
+    // being thrown out again by a stray touch.
+    // A PAN and not a swipe. `UISwipeGestureRecognizer` wants a flick: a
+    // deliberate, unhurried drag to the right never reaches its velocity
+    // threshold and is silently ignored, which is exactly what a person doing
+    // what the feature describes would do.
+    let drag = UIPanGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.resume(_:)))
+    drag.cancelsTouchesInView = false
+    root.addGestureRecognizer(drag)
+
     root.layoutIfNeeded()
+  }
+
+  /// Far enough sideways, EITHER WAY, to count as "take me there" rather than
+  /// as a finger settling.
+  ///
+  /// Direction is deliberately not checked, and that came from watching eight
+  /// real attempts: every one of them went LEFT, by 143 to 341 points, while
+  /// the code was demanding right. Asking for a specific direction only tests
+  /// whether the user guessed the same convention as the author. Going onward
+  /// to the app reads as advancing, which is leftward like turning a page,
+  /// while rightward is what iOS itself uses for going back. Both are defensible
+  /// and neither is worth losing a gesture over.
+  ///
+  /// Read on `.ended` rather than while moving: a threshold crossed mid-drag
+  /// would fire under a thumb that was still deciding. Diagonal is fine, since
+  /// real drags are never straight; it just has to be more sideways than not.
+  private static func draggedSideways(_ recognizer: UIGestureRecognizer) -> Bool {
+    guard let pan = recognizer as? UIPanGestureRecognizer, pan.state == .ended else { return false }
+    let moved = pan.translation(in: pan.view)
+    return abs(moved.x) > 60 && abs(moved.x) > abs(moved.y)
+  }
+
+  /// Where the user was going when the phrase got away from them.
+  private static var resumeTarget: URL?
+
+  /// Back to the app they came from, from the card.
+  ///
+  /// A plain open rather than a fresh relay: the cover is already on screen, so
+  /// nothing is exposed, and re-entering the relay would roll a different line
+  /// under someone who came back to read this one. If the open fails the card
+  /// simply stays, which is a fair way to say nothing happened.
+  fileprivate static func resumeJourney(_ recognizer: UIGestureRecognizer) {
+    guard draggedSideways(recognizer), let target = resumeTarget else { return }
+    resumeTarget = nil
+    UIApplication.shared.open(target, options: [:]) { ok in
+      // RE-ARM, and this is the part that was missing. Resuming opens the
+      // target directly instead of going through the relay, so nothing
+      // recorded that a phrase was owed again: the second time the user came
+      // back, the cover found nothing pending and fell through to the list.
+      //
+      // If a line is worth coming back to once it is worth coming back to
+      // twice. Bouncing keeps working for as long as the user keeps bouncing,
+      // and the two minute window still ends it once they settle into the
+      // other app.
+      guard ok, let phrase = cardPhrase?.text else { return }
+      pendingReturn.handedOff(phrase: phrase, target: target,
+                              at: Date().timeIntervalSince1970)
+    }
+  }
+
+  // MARK: - Pinning the cover on purpose
+
+  /// How long a finger has to stay down before the cover is pinned.
+  ///
+  /// Long enough that nobody trips it while reaching for the screen, short
+  /// enough that it does not feel like a punishment. Being able to WATCH it
+  /// fill is what makes the number tolerable.
+  private static let lockDuration: TimeInterval = 1.2
+
+  private static var ring: CALayer?
+  private static var lockWork: DispatchWorkItem?
+
+  /// A finger arrived on the cover, at `point`.
+  ///
+  /// Also the honest signal that the touch was SEEN. iOS delivers nothing to
+  /// this app for the first ~420ms of a relay, so a press that draws no ring is
+  /// a press that never reached us: lift, press again, and the ring appears.
+  /// That is worth more than any hint text, because it is the truth rather than
+  /// a description of it.
+  private static func fingerArrived(at point: CGPoint) {
+    guard relayInFlight, !gate.locked, ring == nil,
+          let root = window?.rootViewController?.view,
+          !(root.subviews.compactMap { $0 as? UIStackView }.isEmpty)
+    else { return }
+
+    let config = loadConfig()
+    let colour: UIColor = config.isDark ? .white : .black
+    let radius: CGFloat = 32
+
+    // One container for the whole dial, so retiring it later is a single
+    // animation on a single layer rather than three that have to agree.
+    let dial = CALayer()
+    let side = (radius + 6) * 2
+    dial.frame = CGRect(x: point.x - side / 2, y: point.y - side / 2, width: side, height: side)
+    root.layer.addSublayer(dial)
+
+    let centre = CGPoint(x: side / 2, y: side / 2)
+    let circle = UIBezierPath(arcCenter: centre, radius: radius,
+                              startAngle: -.pi / 2, endAngle: 1.5 * .pi, clockwise: true).cgPath
+
+    let track = CAShapeLayer()
+    track.frame = dial.bounds
+    track.path = circle
+    track.fillColor = UIColor.clear.cgColor
+    track.strokeColor = colour.withAlphaComponent(0.12).cgColor
+    track.lineWidth = 3
+    dial.addSublayer(track)
+
+    // The padlock sits INSIDE the dial while it fills, so the ring reads as a
+    // countdown to locking rather than as a countdown to something unnamed.
+    // It is the same glyph that ends up at the top, which is what makes the
+    // two moments feel like one gesture.
+    let glyphConfig = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+    if let glyph = UIImage(systemName: "lock.fill", withConfiguration: glyphConfig)?
+        .withTintColor(colour.withAlphaComponent(0.45), renderingMode: .alwaysOriginal) {
+      let mark = CALayer()
+      mark.contents = glyph.cgImage
+      mark.contentsScale = UIScreen.main.scale
+      mark.bounds = CGRect(origin: .zero, size: glyph.size)
+      mark.position = centre
+      dial.addSublayer(mark)
+    }
+
+    let progress = CAShapeLayer()
+    progress.frame = dial.bounds
+    progress.path = circle
+    progress.fillColor = UIColor.clear.cgColor
+    progress.strokeColor = colour.withAlphaComponent(0.55).cgColor
+    progress.lineWidth = 3
+    progress.lineCap = .round
+    progress.strokeEnd = 0
+    dial.addSublayer(progress)
+
+    let fill = CABasicAnimation(keyPath: "strokeEnd")
+    fill.fromValue = 0
+    fill.toValue = 1
+    fill.duration = lockDuration
+    fill.fillMode = .forwards
+    fill.isRemovedOnCompletion = false
+    progress.add(fill, forKey: "fill")
+    ring = dial
+
+    // The animation is the picture; this is the fact. Kept separate so a
+    // dropped frame cannot decide whether the cover is pinned.
+    let work = DispatchWorkItem { engageLock() }
+    lockWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + lockDuration, execute: work)
+  }
+
+  /// The finger left before the ring closed.
+  private static func fingerLeft() {
+    lockWork?.cancel()
+    lockWork = nil
+    ring?.removeFromSuperlayer()
+    ring = nil
+  }
+
+  /// The ring closed. From here nothing leaves on its own.
+  private static func engageLock() {
+    guard relayInFlight, !gate.locked, let root = window?.rootViewController?.view else { return }
+    gate.lock()
+    // Copy and Share read this; on the return card it is set by `presentCard`.
+    if let text = relayPhrase {
+      cardPhrase = Quote(text: text, author: loadConfig().items.first { $0.text == text }?.author)
+    }
+    lockWork = nil
+
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+    let config = loadConfig()
+    let count = relayPhrase.map { loadStats().counts[$0] ?? 0 } ?? 0
+    let stack = root.subviews.compactMap { $0 as? UIStackView }.first
+    addCardChrome(to: root, below: stack, config: config, count: count)
+    addPadlock(to: root, config: config)
+
+    // The ring has said what it had to say. It shrinks away where it stood
+    // while the padlock fades in at the top, so the eye follows one thing
+    // becoming another rather than two unrelated changes.
+    if let ring {
+      let shrink = CABasicAnimation(keyPath: "transform.scale")
+      shrink.toValue = 0.4
+      let fade = CABasicAnimation(keyPath: "opacity")
+      fade.toValue = 0
+      let group = CAAnimationGroup()
+      group.animations = [shrink, fade]
+      group.duration = 0.28
+      group.fillMode = .forwards
+      group.isRemovedOnCompletion = false
+      ring.add(group, forKey: "retire")
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        ring.removeFromSuperlayer()
+      }
+      self.ring = nil
+    }
+
+    let tap = UITapGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.proceedFromLock))
+    tap.cancelsTouchesInView = false
+    root.addGestureRecognizer(tap)
+    let drag = UIPanGestureRecognizer(target: Proxy.shared,
+                                      action: #selector(Proxy.proceedFromLock(_:)))
+    drag.cancelsTouchesInView = false
+    root.addGestureRecognizer(drag)
+  }
+
+  /// The padlock, opposite the copy and share controls, saying the cover is
+  /// pinned rather than merely slow.
+  private static func addPadlock(to container: UIView, config: Config) {
+    let colour: UIColor = config.isDark ? .white : .black
+    let symbol = UIImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+    // COLOURED INTO THE IMAGE, not left to `tintColor`.
+    //
+    // A UIImageView only honours `tintColor` for a template image, and
+    // `UIImage(systemName:)` hands back `.automatic`, which a plain image view
+    // renders as the symbol's own colour: black. A black padlock on a black
+    // cover is a padlock nobody can see, and the lock looked broken when the
+    // only thing missing was its colour. UIButton resolves this on its own,
+    // which is why Copy and Share showed up and this did not.
+    let glyph = UIImage(systemName: "lock.fill", withConfiguration: symbol)?
+      .withTintColor(colour.withAlphaComponent(0.4), renderingMode: .alwaysOriginal)
+    let lock = UIImageView(image: glyph)
+    lock.alpha = 0
+    lock.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(lock)
+    NSLayoutConstraint.activate([
+      lock.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 30),
+      lock.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 22),
+    ])
+    UIView.animate(withDuration: 0.28) { lock.alpha = 1 }
+  }
+
+  /// The user chose THIS app over the one the row pointed at.
+  ///
+  /// `dismiss` alone is not enough and that is not obvious: it refuses to do
+  /// anything while a relay is in flight, and a pinned cover is a relay still
+  /// in flight, because nothing was ever handed off. On the return card the
+  /// relay is long over and the plain dismiss works, which is exactly why this
+  /// path went unnoticed until a locked cover met the button.
+  ///
+  /// Ending the relay here is honest rather than a workaround: the target is
+  /// not going to open, so there is nothing left to guard.
+  fileprivate static func openHostApp() {
+    relayInFlight = false
+    pendingReturn.clear()
+    dismiss()
+  }
+
+  /// A tap on the pinned cover, or a drag to the right: go where the widget row
+  /// was pointing all along.
+  ///
+  /// A tap that lands on one of the controls is not this. `copy`, `share` and
+  /// the button all sit in front and would otherwise be unreachable, since the
+  /// recogniser is on the view behind them.
+  fileprivate static func proceedFromLock(_ recognizer: UIGestureRecognizer) {
+    guard gate.locked, let root = window?.rootViewController?.view else { return }
+    if recognizer is UITapGestureRecognizer {
+      if root.hitTest(recognizer.location(in: root), with: nil) is UIControl { return }
+    } else if !draggedSideways(recognizer) {
+      return
+    }
+    gate.proceed()
+    // The handoff `proceed` fires records the return like any other, and it is
+    // LEFT ALONE on purpose.
+    //
+    // This used to clear it, reasoning that a line read deliberately has
+    // nothing left to recover. That was backwards. Pinning the cover is the
+    // strongest signal a phrase matters to this person, so clearing it took the
+    // card away from precisely the user who cared most, and cost them the
+    // flash-free return as well: with nothing pending, the exit rolls a new
+    // line into the snapshot and they watch it change on the way back.
   }
 
   // MARK: - Taking the line with you
@@ -684,9 +1003,10 @@ enum QuoteScreen {
   /// runloop turns, so ticking synchronously guarantees no finger is ever seen.
   /// It still costs nothing when nobody is touching, which is the rule about an
   /// off switch never charging for itself.
-  static func scheduleOpen(after seconds: TimeInterval, _ open: @escaping () -> Void) {
+  static func scheduleOpen(after seconds: TimeInterval, target: URL,
+                           _ open: @escaping () -> Void) {
     let token = gate.arm {
-      recordHandoff()
+      recordHandoff(target: target)
       open()
     }
     guard seconds > 0 else {
@@ -786,7 +1106,7 @@ enum QuoteScreen {
       // Only while a handoff is actually pending. Once the relay is over this
       // same window carries the return card, and a tap on its Share button is
       // not a statement about any launch.
-      guard QuoteScreen.relayInFlight else { return }
+      guard QuoteScreen.relayInFlight, !QuoteScreen.gate.locked else { return }
       guard let touches = event.allTouches, !touches.isEmpty else { return }
       // Down if ANY touch is still on the glass. The gate collapses repeats,
       // so calling this on every event is free.
@@ -814,6 +1134,7 @@ enum QuoteScreen {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesBegan(touches, with: event)
       QuoteScreen.gate.press()
+      if let point = touches.first?.location(in: self) { QuoteScreen.fingerArrived(at: point) }
     }
 
     /// A finger that was ALREADY DOWN when the cover became touchable.
@@ -832,16 +1153,21 @@ enum QuoteScreen {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesMoved(touches, with: event)
       QuoteScreen.gate.press()
+      // The finger that landed during the animation has no `began` here, so
+      // this is where its ring starts. `fingerArrived` ignores repeats.
+      if let point = touches.first?.location(in: self) { QuoteScreen.fingerArrived(at: point) }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesEnded(touches, with: event)
       QuoteScreen.gate.release()
+      QuoteScreen.fingerLeft()
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesCancelled(touches, with: event)
       QuoteScreen.gate.cancelPress()
+      QuoteScreen.fingerLeft()
     }
   }
 
@@ -868,13 +1194,21 @@ enum QuoteScreen {
 
     @objc func tick() { QuoteScreen.tick() }
 
+    @objc func proceedFromLock(_ recognizer: UIGestureRecognizer) {
+      QuoteScreen.proceedFromLock(recognizer)
+    }
+
+    @objc func resume(_ recognizer: UIGestureRecognizer) {
+      QuoteScreen.resumeJourney(recognizer)
+    }
+
     @objc func copyCard() { QuoteScreen.copyCard() }
     @objc func shareCard() { QuoteScreen.shareCard() }
 
     /// The way out of the card, and the only one that matters: after this the
     /// cover is gone and the user is in the app they asked for.
     @objc func dismissCard() {
-      QuoteScreen.dismiss()
+      QuoteScreen.openHostApp()
     }
 
     @objc func hostTouch(_ recognizer: UILongPressGestureRecognizer) {
@@ -927,6 +1261,16 @@ enum QuoteScreen {
     stats.current = next.text
     saveStats(stats, items: config.items)
     return next
+  }
+
+  /// The line already on the cover, neither re-drawn nor counted.
+  ///
+  /// Falls back to the stored `current` because `relayPhrase` lives only as
+  /// long as the process: a relay that began before a restart has none, and
+  /// repainting the cover blank would be worse than repainting it the same.
+  private static func keptQuote(_ config: Config) -> Quote? {
+    guard let text = relayPhrase ?? loadStats().current else { return nil }
+    return config.items.first { $0.text == text }
   }
 
   /// The cold relay, and the one case where NOT rolling is the right answer.

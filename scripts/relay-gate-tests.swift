@@ -219,8 +219,8 @@ enum RelayGateTests {
   /// line you did not get to read is what you come back to.
   static func testReturnAfterHandoffOffersThePhrase() {
     var ret = RelayReturn()
-    ret.handedOff(phrase: "the obstacle is the way", at: 1000)
-    check(ret.consume(at: 1002) == "the obstacle is the way", "a quick return offers the line")
+    ret.handedOff(phrase: "the obstacle is the way", target: URL(string: "whatsapp://"), at: 1000)
+    check(ret.consume(at: 1002)?.phrase == "the obstacle is the way", "a quick return offers the line")
   }
 
   /// Opening the app without a relay behind it is someone going to use it. The
@@ -234,7 +234,7 @@ enum RelayGateTests {
   /// opening the app to do something, not chasing a line.
   static func testStaleReturnOffersNothing() {
     var ret = RelayReturn()
-    ret.handedOff(phrase: "seneca", at: 1000)
+    ret.handedOff(phrase: "seneca", target: URL(string: "whatsapp://"), at: 1000)
     check(ret.consume(at: 1000 + RelayReturn.window + 1) == nil, "a late return offers nothing")
   }
 
@@ -242,14 +242,14 @@ enum RelayGateTests {
   /// vanishes for no reason a user could ever describe.
   static func testReturnOnTheBoundaryStillOffers() {
     var ret = RelayReturn()
-    ret.handedOff(phrase: "marcus", at: 1000)
-    check(ret.consume(at: 1000 + RelayReturn.window) == "marcus", "the boundary is inclusive")
+    ret.handedOff(phrase: "marcus", target: URL(string: "whatsapp://"), at: 1000)
+    check(ret.consume(at: 1000 + RelayReturn.window)?.phrase == "marcus", "the boundary is inclusive")
   }
 
   /// Consuming is once. The second activation is the user opening the app.
   static func testTheOfferIsConsumed() {
     var ret = RelayReturn()
-    ret.handedOff(phrase: "epictetus", at: 1000)
+    ret.handedOff(phrase: "epictetus", target: URL(string: "whatsapp://"), at: 1000)
     _ = ret.consume(at: 1001)
     check(ret.consume(at: 1002) == nil, "the offer is not made twice")
   }
@@ -258,7 +258,7 @@ enum RelayGateTests {
   /// surface later on an unrelated activation.
   static func testAStaleOfferIsAlsoConsumed() {
     var ret = RelayReturn()
-    ret.handedOff(phrase: "seneca", at: 1000)
+    ret.handedOff(phrase: "seneca", target: URL(string: "whatsapp://"), at: 1000)
     _ = ret.consume(at: 1000 + RelayReturn.window + 1)
     check(!ret.isPending, "a stale offer does not linger")
   }
@@ -266,7 +266,7 @@ enum RelayGateTests {
   /// The target refused to open, so the app never left and nothing was missed.
   static func testFailedOpenOwesNothing() {
     var ret = RelayReturn()
-    ret.handedOff(phrase: "marcus", at: 1000)
+    ret.handedOff(phrase: "marcus", target: URL(string: "whatsapp://"), at: 1000)
     ret.clear()
     check(ret.consume(at: 1001) == nil, "a relay that never left owes no card")
   }
@@ -275,7 +275,7 @@ enum RelayGateTests {
   /// off, and must not offer an empty card on the way back.
   static func testHandoffWithNoPhraseOffersNothing() {
     var ret = RelayReturn()
-    ret.handedOff(phrase: nil, at: 1000)
+    ret.handedOff(phrase: nil, target: URL(string: "whatsapp://"), at: 1000)
     check(ret.consume(at: 1001) == nil, "no phrase means no card")
   }
 
@@ -283,9 +283,152 @@ enum RelayGateTests {
   /// just missed, not to one from two launches ago.
   static func testTheLatestHandoffWins() {
     var ret = RelayReturn()
-    ret.handedOff(phrase: "first", at: 1000)
-    ret.handedOff(phrase: "second", at: 1010)
-    check(ret.consume(at: 1011) == "second", "the most recent line is the one waiting")
+    ret.handedOff(phrase: "first", target: URL(string: "whatsapp://"), at: 1000)
+    ret.handedOff(phrase: "second", target: URL(string: "whatsapp://"), at: 1010)
+    check(ret.consume(at: 1011)?.phrase == "second", "the most recent line is the one waiting")
+  }
+
+
+  // MARK: - The lock: a cover pinned on purpose
+
+  /// Holding long enough pins the cover. The chosen duration stops mattering.
+  static func testLockSurvivesTheDuration() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.press()
+    gate.lock()
+    gate.durationElapsed(token)
+    check(opened == 0, "a locked cover ignores its own duration")
+  }
+
+  /// Letting go of a cover you pinned means you are done PRESSING, not done
+  /// reading. This is the whole difference between holding and locking.
+  static func testReleaseDoesNothingWhileLocked() {
+    let gate = RelayGate()
+    var opened = 0
+    gate.arm { opened += 1 }
+    gate.press()
+    gate.lock()
+    gate.release()
+    check(opened == 0, "lifting the finger off a locked cover does not hand off")
+  }
+
+  /// A cancelled touch must not sneak past the lock either. It is a release by
+  /// another name and the same reasoning applies.
+  static func testCancelDoesNothingWhileLocked() {
+    let gate = RelayGate()
+    var opened = 0
+    gate.arm { opened += 1 }
+    gate.press()
+    gate.lock()
+    gate.cancelPress()
+    check(opened == 0, "a cancelled touch does not break the lock")
+  }
+
+  /// The tap, or the drag to the right. The one way out that goes where the
+  /// user was originally headed.
+  static func testProceedHandsOffFromALock() {
+    let gate = RelayGate()
+    var opened = 0
+    gate.arm { opened += 1 }
+    gate.press()
+    gate.lock()
+    gate.proceed()
+    check(opened == 1, "proceeding from a lock opens the target")
+  }
+
+  /// Twice is once. A double tap on a locked cover is one instruction.
+  static func testProceedOnlyFiresOnce() {
+    let gate = RelayGate()
+    var opened = 0
+    gate.arm { opened += 1 }
+    gate.press()
+    gate.lock()
+    gate.proceed()
+    gate.proceed()
+    check(opened == 1, "proceeding twice opens once")
+  }
+
+  /// THE WORST FAILURE THIS FILE CAN HAVE. A lock that outlives its cover would
+  /// hold every relay afterwards behind a pin nobody can see: a launcher that
+  /// never launches. `reset` is the other way out and it has to be total.
+  static func testResetUnlocks() {
+    let gate = RelayGate()
+    gate.arm {}
+    gate.press()
+    gate.lock()
+    gate.reset()
+
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.durationElapsed(token)
+    check(opened == 1, "a relay after a locked one opens on its own duration")
+  }
+
+  /// A tick left over from before the lock is still owed to nobody afterwards.
+  static func testStaleTickCannotOpenAfterProceed() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.press()
+    gate.lock()
+    gate.proceed()
+    gate.durationElapsed(token)
+    check(opened == 1, "the old tick does not open a second time after proceeding")
+  }
+
+  /// Locking without a finger is not a thing the UI can do, but the gate must
+  /// not invent a handoff if it happens.
+  static func testLockWithoutPressStillBlocks() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.lock()
+    gate.durationElapsed(token)
+    check(opened == 0, "a lock blocks even with no finger recorded")
+    gate.proceed()
+    check(opened == 1, "and proceeding still works")
+  }
+
+  /// The flag the UI reads to know whether to draw a padlock.
+  static func testLockedIsVisible() {
+    let gate = RelayGate()
+    gate.arm {}
+    check(!gate.locked, "not locked to begin with")
+    gate.lock()
+    check(gate.locked, "locked after locking")
+    gate.proceed()
+    check(!gate.locked, "not locked after proceeding")
+  }
+
+
+  /// Swiping right on the card puts you back where you were going, so the card
+  /// has to remember the destination and not only the line.
+  static func testTheCardRemembersWhereYouWereGoing() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "seneca", target: URL(string: "whatsapp-consumer://"), at: 1000)
+    check(ret.consume(at: 1001)?.target?.absoluteString == "whatsapp-consumer://",
+          "the destination comes back with the line")
+  }
+
+  /// A relay with no usable destination still owes the line. The card shows,
+  /// and the swipe simply has nowhere to go.
+  static func testACardWithoutADestinationStillShows() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "marcus", target: nil, at: 1000)
+    let missed = ret.consume(at: 1001)
+    check(missed?.phrase == "marcus", "the line survives a missing destination")
+    check(missed?.target == nil, "and the destination is honestly absent")
+  }
+
+  /// The destination is consumed with everything else, so a later activation
+  /// cannot swipe you into an app you left minutes ago.
+  static func testTheDestinationIsConsumedToo() {
+    var ret = RelayReturn()
+    ret.handedOff(phrase: "epictetus", target: URL(string: "waze://"), at: 1000)
+    _ = ret.consume(at: 1001)
+    check(ret.consume(at: 1002) == nil, "the destination does not linger either")
   }
 
   static func main() {
@@ -312,6 +455,19 @@ enum RelayGateTests {
     testFailedOpenOwesNothing()
     testHandoffWithNoPhraseOffersNothing()
     testTheLatestHandoffWins()
+    testTheCardRemembersWhereYouWereGoing()
+    testACardWithoutADestinationStillShows()
+    testTheDestinationIsConsumedToo()
+
+    testLockSurvivesTheDuration()
+    testReleaseDoesNothingWhileLocked()
+    testCancelDoesNothingWhileLocked()
+    testProceedHandsOffFromALock()
+    testProceedOnlyFiresOnce()
+    testResetUnlocks()
+    testStaleTickCannotOpenAfterProceed()
+    testLockWithoutPressStillBlocks()
+    testLockedIsVisible()
 
     print("")
     if failures == 0 {

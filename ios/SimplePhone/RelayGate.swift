@@ -82,13 +82,50 @@ final class RelayGate {
     fire()
   }
 
+  /// Set once a finger has held long enough to pin the cover deliberately.
+  ///
+  /// After this NOTHING leaves on its own. Not the duration, not lifting the
+  /// finger, not a tick left over from before. The user asked for the line to
+  /// stay, and the only thing that may take it away is the user asking again.
+  ///
+  /// It is the most dangerous state in this file for exactly that reason: a
+  /// lock with no way out is a launcher that never launches. `proceed` and
+  /// `reset` are the two ways out and both are covered by cases in
+  /// `scripts/relay-gate-tests.swift`.
+  private var isLocked = false
+
+  var locked: Bool { isLocked }
+
   /// A finger landed on the cover.
   func press() {
     isHeld = true
     isDue = true
   }
 
+  /// The finger held long enough to mean it.
+  func lock() {
+    isLocked = true
+  }
+
+  /// The user asked to go, from a locked cover: a tap, or a drag to the right.
+  /// The only thing that hands off once locked.
+  func proceed() {
+    isLocked = false
+    isHeld = false
+    isDue = true
+    fire()
+  }
+
   /// The finger lifted.
+  ///
+  /// Inert while locked, and NOT by a guard of its own: `fire` is the single
+  /// place the lock is enforced. A second guard here read as defence in depth
+  /// and was the opposite, because the two masked each other. Removing either
+  /// one left every case green, which is a test suite describing a rule that
+  /// nothing actually implements.
+  ///
+  /// Letting go of a cover you just pinned means you are done pressing, not
+  /// that you are done reading.
   func release() {
     isHeld = false
     fire()
@@ -116,11 +153,12 @@ final class RelayGate {
     cycle &+= 1
     isHeld = false
     isDue = false
+    isLocked = false
     open = nil
   }
 
   private func fire() {
-    guard isDue, !isHeld, let work = open else { return }
+    guard !isLocked, isDue, !isHeld, let work = open else { return }
     open = nil
     work()
   }
