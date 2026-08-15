@@ -93,9 +93,13 @@ switch languages.
 **Hold the screen and the phrase stays.** Press anywhere while it is up and the handoff waits; lift
 your thumb and you go.
 
-**Keep holding and it pins.** After 1.2 seconds the cover is yours: no countdown left, nothing
-leaves on its own. A short haptic and a padlock at the top say so. From there, tap or drag sideways
-to carry on to the app you picked, or take the button at the bottom to stay here instead.
+**Keep holding and it pins.** A ring fills under your finger, and after 1.2 seconds the cover is
+yours: no countdown left, nothing leaves on its own. The ring shrinks away and a padlock at the top
+takes its place. From there, tap or drag sideways to carry on to the app you picked, or take the
+button at the bottom to stay here instead.
+
+The ring is also the only honest answer to whether the touch was seen at all. If none appears, the
+press landed in the dead window described below: lift, press again.
 
 The rule lives in `ios/SimplePhone/RelayGate.swift` and is the one native thing here with its own
 test suite.

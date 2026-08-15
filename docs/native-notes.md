@@ -501,14 +501,15 @@ backgrounding, so a "1.5 second" cover used to offer 1.36 seconds you could
 touch and 0.4 you could only look at. The countdown now starts after
 `touchSettleDelay`, so the number in the Phrases screen means what it says.
 
-**A press on reflex cannot work, and no API can see it.** Nothing the app draws
-can report a touch it never received, which is why the recovery card exists: the
-line is retrievable afterwards instead of the hold being made to feel reliable
-when it cannot be.
+**A press on reflex cannot work, and no API can see it.** This is why the ring
+under the thumb matters beyond decoration: a press that draws no ring is a press
+that never arrived. Lift, press again. That is the fact rather than a
+description of it, which is worth more than any hint text.
 
-An earlier version filled a ring under the thumb to show the hold taking. It
-never once appeared on a device and was removed: an indicator that cannot render
-is worse than none, because it reads as the feature being broken.
+The ring carries nothing at its centre. A padlock glyph was drawn there once and
+never rendered on a device, while the ring around it always did. An indicator
+that cannot render is worse than none, because it reads as the feature being
+broken, so it went and the ring stayed.
 
 ## Touches on the cover
 

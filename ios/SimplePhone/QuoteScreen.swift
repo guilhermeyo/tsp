@@ -425,6 +425,7 @@ enum QuoteScreen {
   /// fill is what makes the number tolerable.
   private static let lockDuration: TimeInterval = 1.2
 
+  private static var ring: CALayer?
   private static var lockWork: DispatchWorkItem?
 
   /// A finger arrived on the cover, at `point`.
@@ -434,27 +435,76 @@ enum QuoteScreen {
   /// a press that never reached us: lift, press again, and the ring appears.
   /// That is worth more than any hint text, because it is the truth rather than
   /// a description of it.
-  /// A finger arrived on the cover: start the clock that pins it.
+  /// A finger arrived on the cover: draw the ring and start the clock that pins
+  /// the cover when it closes.
   ///
-  /// No drawn ring any more. An earlier version filled a dial under the thumb
-  /// and never once appeared on a device, so it carried no information while
-  /// costing a layer tree per touch. The haptic at the moment of pinning is the
-  /// feedback.
-  fileprivate static func fingerLanded() {
-    guard relayInFlight, !gate.locked, lockWork == nil,
+  /// The ring is the only feedback a hold can have. iOS delivers nothing to
+  /// this app for the first ~420ms of a widget tap, so a press that draws no
+  /// ring is a press that never arrived: lift and press again. That is the fact
+  /// rather than a description of it.
+  ///
+  /// No glyph inside it. An earlier version drew a padlock at the centre and it
+  /// never rendered on a device, so the ring stands alone.
+  fileprivate static func fingerLanded(at point: CGPoint) {
+    guard relayInFlight, !gate.locked, ring == nil,
           let root = window?.rootViewController?.view,
           !(root.subviews.compactMap { $0 as? UIStackView }.isEmpty)
     else { return }
 
+    let colour: UIColor = QuoteCatalog.loadConfig().isDark ? .white : .black
+    let radius: CGFloat = 32
+    let side = (radius + 6) * 2
+
+    // One container, so retiring it later is a single animation on a single
+    // layer rather than two that have to agree.
+    let dial = CALayer()
+    dial.frame = CGRect(x: point.x - side / 2, y: point.y - side / 2, width: side, height: side)
+    root.layer.addSublayer(dial)
+
+    let centre = CGPoint(x: side / 2, y: side / 2)
+    let circle = UIBezierPath(arcCenter: centre, radius: radius,
+                              startAngle: -.pi / 2, endAngle: 1.5 * .pi, clockwise: true).cgPath
+
+    let track = CAShapeLayer()
+    track.frame = dial.bounds
+    track.path = circle
+    track.fillColor = UIColor.clear.cgColor
+    track.strokeColor = colour.withAlphaComponent(0.15).cgColor
+    track.lineWidth = 3
+    dial.addSublayer(track)
+
+    let progress = CAShapeLayer()
+    progress.frame = dial.bounds
+    progress.path = circle
+    progress.fillColor = UIColor.clear.cgColor
+    progress.strokeColor = colour.withAlphaComponent(0.6).cgColor
+    progress.lineWidth = 3
+    progress.lineCap = .round
+    progress.strokeEnd = 0
+    dial.addSublayer(progress)
+
+    let sweep = CABasicAnimation(keyPath: "strokeEnd")
+    sweep.fromValue = 0
+    sweep.toValue = 1
+    sweep.duration = lockDuration
+    sweep.fillMode = .forwards
+    sweep.isRemovedOnCompletion = false
+    progress.add(sweep, forKey: "sweep")
+    ring = dial
+
+    // The animation is the picture; this is the fact. Kept separate so a
+    // dropped frame cannot decide whether the cover is pinned.
     let work = DispatchWorkItem { engageLock() }
     lockWork = work
     DispatchQueue.main.asyncAfter(deadline: .now() + lockDuration, execute: work)
   }
 
-  /// The finger left before it had been down long enough.
+  /// The finger left before the ring closed.
   private static func fingerLeft() {
     lockWork?.cancel()
     lockWork = nil
+    ring?.removeFromSuperlayer()
+    ring = nil
   }
 
   /// The finger held long enough. From here nothing leaves on its own.
@@ -477,6 +527,23 @@ enum QuoteScreen {
       target: Proxy.shared, copy: #selector(Proxy.copyCard),
       share: #selector(Proxy.shareCard), open: #selector(Proxy.dismissCard))
     CoverChrome.addPadlock(to: root, config: config)
+
+    // The ring has said what it had to say: it shrinks away where it stood
+    // while the padlock fades in at the top.
+    if let ring {
+      let shrink = CABasicAnimation(keyPath: "transform.scale")
+      shrink.toValue = 0.4
+      let fade = CABasicAnimation(keyPath: "opacity")
+      fade.toValue = 0
+      let group = CAAnimationGroup()
+      group.animations = [shrink, fade]
+      group.duration = 0.28
+      group.fillMode = .forwards
+      group.isRemovedOnCompletion = false
+      ring.add(group, forKey: "retire")
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { ring.removeFromSuperlayer() }
+      self.ring = nil
+    }
 
     let tap = UITapGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.proceedFromLock))
     tap.cancelsTouchesInView = false
@@ -862,7 +929,9 @@ enum QuoteScreen {
         // Also here, because this is the ONLY place a finger that landed during
         // the app-switch animation is seen: it produces no `touchesBegan` on
         // the view, having begun while the home screen still owned it.
-        QuoteScreen.fingerLanded()
+        if let point = touches.first?.location(in: rootViewController?.view) {
+          QuoteScreen.fingerLanded(at: point)
+        }
       } else {
         QuoteScreen.gate.release()
       }
@@ -884,7 +953,7 @@ enum QuoteScreen {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesBegan(touches, with: event)
       QuoteScreen.gate.press()
-      QuoteScreen.fingerLanded()
+      if let point = touches.first?.location(in: self) { QuoteScreen.fingerLanded(at: point) }
     }
 
     /// A finger that was ALREADY DOWN when the cover became touchable.
@@ -905,7 +974,7 @@ enum QuoteScreen {
       QuoteScreen.gate.press()
       // The finger that landed during the animation has no `began` here.
       // `fingerLanded` ignores repeats.
-      QuoteScreen.fingerLanded()
+      if let point = touches.first?.location(in: self) { QuoteScreen.fingerLanded(at: point) }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
