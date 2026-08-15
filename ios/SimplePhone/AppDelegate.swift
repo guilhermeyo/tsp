@@ -113,7 +113,7 @@ private enum Relay {
     // The URL is SUBSTITUTED into the sentence, not concatenated around it. The
     // Japanese line puts the whole explanation before the URL, which no amount
     // of prefix-plus-suffix can express.
-    let strings = QuoteScreen.relayStrings(language: QuoteScreen.configuredLanguage())
+    let strings = QuoteCatalog.relayStrings(language: QuoteCatalog.configuredLanguage())
     let alert = UIAlertController(
       title: strings["title"],
       message: strings["body"]?.replacingOccurrences(of: "%@", with: target.absoluteString),
