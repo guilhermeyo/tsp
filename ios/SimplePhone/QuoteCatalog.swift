@@ -3,19 +3,13 @@ import Foundation
 /// Everything the cover reads and writes: the phrase catalogue, the shared
 /// config the app owns, and the tally of how often each line has been put up.
 ///
-/// Split out of `QuoteScreen`, which had grown to sixteen hundred lines doing
-/// five jobs at once and where a change to how a line is chosen sat forty
-/// screens away from the window that draws it.
+/// Foundation only, which is a rule and not a coincidence: it keeps the window,
+/// the frame deadline and the touch handling out, and it is what would let a
+/// test compile this file the way `scripts/test-relay-gate` compiles the gate.
 ///
-/// FOUNDATION ONLY, and that is a rule rather than a coincidence. It is what
-/// keeps this half free of the window, the frame deadline and the touch
-/// handling, and it is what would let a test compile this file the way
-/// `scripts/test-relay-gate` already compiles the gate.
-///
-/// The App Group is the only channel between this app and its widget, and this
-/// is the reader. `launcher_config` belongs to the TypeScript side and is never
-/// written here. `quote_stats` is the mirror image: written only here, read by
-/// the module that feeds the Phrases screen.
+/// `launcher_config` belongs to the TypeScript side and is only ever read here.
+/// `quote_stats` is the mirror image: written only here, read by the module
+/// that feeds the Phrases screen.
 enum QuoteCatalog {
   private static let appGroupId = "group.com.guilherme44.simple-phone"
   private static let configKey = "launcher_config"
@@ -59,11 +53,9 @@ enum QuoteCatalog {
     guard let next = pick(from: config.items, counts: stats.counts, excluding: stats.current) else {
       return nil
     }
-    // NOT COUNTED HERE. Drawing a line is not showing it to anybody: this runs
-    // on a backgrounding, and what it paints may be replaced by the return card
-    // before a human ever reads it, or may never be foregrounded at all. The
-    // tally is incremented by `countAsShown`, on the relay that actually puts
-    // the line in front of someone.
+    // Not counted here. Drawing is not showing: this runs on a backgrounding,
+    // and what it paints may be replaced by the return card or never
+    // foregrounded at all. `countAsShown` scores it.
     stats.current = next.text
     saveStats(stats, items: config.items)
     return next
@@ -71,17 +63,10 @@ enum QuoteCatalog {
 
   /// Counts a line at the moment it becomes the cover of a real relay.
   ///
-  /// Splitting this out of `roll` is what lets the roll stay where it belongs.
-  /// The two were the same call, so keeping a phrase for the return card meant
-  /// not rolling, and not rolling meant the line froze for anyone who only ever
-  /// uses the widget: the pending return that gates the skip is only consumed
-  /// by opening the app, which that person never does. The freeze was the old
-  /// "phrase that never changed" bug coming back through another door.
-  ///
-  /// Counting here also retires an accepted inaccuracy the header of this file
-  /// used to describe: the app-switcher card and a plain icon launch put the
-  /// cover up without anyone launching anything, and used to score for it. Now
-  /// they do not.
+  /// Separate from `roll` so that keeping a phrase for the return card does not
+  /// also mean freezing the rotation. It is also more honest than counting at
+  /// the draw: the app-switcher card and a plain icon launch raise the cover
+  /// without anyone launching anything, and used to score for it.
   static func countAsShown(_ text: String?, config: Config) {
     guard let text, config.enabled else { return }
     var stats = loadStats()

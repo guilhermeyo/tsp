@@ -145,13 +145,9 @@ enum QuoteScreen {
     relayInFlight = true
     relayPhrase = nil
     clearCoverGestures()
-    // A CARD STILL OWED WHEN A NEW RELAY STARTS WAS NEVER COLLECTED.
-    //
-    // The user went back to the home screen and launched something else instead
-    // of tapping the breadcrumb, so the line they were offered is one they chose
-    // not to read. That is the signal the roll needs: keeping a phrase for a
-    // return nobody makes is what froze the line for anyone who only ever taps
-    // the widget.
+    // A card still owed when a new relay starts was never collected: the user
+    // launched something else instead of tapping the breadcrumb, so that line
+    // is one they chose not to read.
     if pendingReturn.isPending {
       rollOwed = true
       pendingReturn.clear()
@@ -160,15 +156,9 @@ enum QuoteScreen {
 
   /// Set when a return went uncollected, and honoured at the next exit.
   ///
-  /// This is the whole of the tension between two real bugs. Rolling on the way
-  /// out makes the snapshot iOS replays carry a line the card then has to
-  /// correct, which the user sees as a phrase changing under them on the way
-  /// back. Not rolling keeps the line still, which is the older and worse bug.
-  ///
-  /// So the exit that ends a relay someone may come back to keeps its line, and
-  /// the exit after one they walked away from rolls. A phrase is shown at most
-  /// twice to somebody who never comes back, and never twice to somebody who
-  /// does.
+  /// An exit ending a relay someone may still come back to keeps its line; the
+  /// exit after one they walked away from rolls. Why it cannot simply always
+  /// roll, or always keep: `docs/native-notes.md`, "One paint, two audiences".
   private static var rollOwed = false
 
   /// The line already on the cover, neither re-drawn nor re-counted.
@@ -183,17 +173,10 @@ enum QuoteScreen {
 
   /// Strips the recognisers a pinned cover or a return card left behind.
   ///
-  /// The window outlives any one relay: it is only torn down when the user
-  /// comes back with nothing pending. So without this, every lock and every
-  /// card stacked another recogniser on the same view, and a pan among them
-  /// would CANCEL the touches the view was using to detect a hold. A thumb's
-  /// natural drift was enough to start the pan, which read as the finger
-  /// leaving: the ring vanished and the target opened. Holding got worse the
-  /// more the feature was used, which is the shape of a leak rather than a bug
-  /// in the hold itself.
-  ///
-  /// `cancelsTouchesInView = false` on each recogniser is the other half. Both
-  /// are here because either one alone would have hidden the other.
+  /// The window outlives any one relay, so these accumulate, and a pan among
+  /// them cancels the touches the view uses to detect a hold. Every recogniser
+  /// also sets `cancelsTouchesInView = false`; either half alone hides the
+  /// other. See `docs/native-notes.md`, "Touches on the cover".
   private static func clearCoverGestures() {
     guard let root = window?.rootViewController?.view else { return }
     root.gestureRecognizers?.forEach(root.removeGestureRecognizer)
@@ -269,20 +252,10 @@ enum QuoteScreen {
     } else if window == nil {
       // Reachable only on a COLD relay: a warm one always finds the cover the
       // last backgrounding left standing. See `restoreOrRoll`.
-      // A COLD RELAY IS PROOF THAT ANY EARLIER RETURN WENT UNCOLLECTED.
-      //
-      // `pendingReturn` lives in memory and nowhere else, so a process that was
-      // killed between relays takes the evidence with it. Without this the exit
-      // always found a fresh pending return, always kept the line, and the next
-      // cold relay restored the very same one: the phrase froze for good.
-      //
-      // And cold is the ORDINARY case for a launcher. Tap a row, land in
-      // Instagram, and iOS reclaims the launcher long before you come back.
-      // The warm path was the only one being reasoned about.
-      //
-      // Marked rather than rolled, because this relay must keep showing the
-      // line the dead process painted into the snapshot. Rolling is for the way
-      // out.
+      // A cold relay proves any earlier return went uncollected: `pendingReturn`
+      // is memory-only, so a killed process took the evidence with it. Marked
+      // rather than rolled, because this relay still has to show the line the
+      // dead process painted into the snapshot.
       rollOwed = true
       let drawn = QuoteCatalog.restoreOrRoll(config)
       relayPhrase = drawn?.text
@@ -400,20 +373,12 @@ enum QuoteScreen {
     root.layoutIfNeeded()
   }
 
-  /// Far enough sideways, EITHER WAY, to count as "take me there" rather than
-  /// as a finger settling.
+  /// Far enough sideways, either way, to mean "take me there" rather than a
+  /// finger settling.
   ///
-  /// Direction is deliberately not checked, and that came from watching eight
-  /// real attempts: every one of them went LEFT, by 143 to 341 points, while
-  /// the code was demanding right. Asking for a specific direction only tests
-  /// whether the user guessed the same convention as the author. Going onward
-  /// to the app reads as advancing, which is leftward like turning a page,
-  /// while rightward is what iOS itself uses for going back. Both are defensible
-  /// and neither is worth losing a gesture over.
-  ///
-  /// Read on `.ended` rather than while moving: a threshold crossed mid-drag
-  /// would fire under a thumb that was still deciding. Diagonal is fine, since
-  /// real drags are never straight; it just has to be more sideways than not.
+  /// Direction is deliberately not checked: asking for one only tests whether
+  /// the user guessed the same convention as the author. Read on `.ended`, so a
+  /// threshold crossed mid-drag cannot fire under a thumb still deciding.
   private static func draggedSideways(_ recognizer: UIGestureRecognizer) -> Bool {
     guard let pan = recognizer as? UIPanGestureRecognizer, pan.state == .ended else { return false }
     let moved = pan.translation(in: pan.view)
@@ -597,14 +562,9 @@ enum QuoteScreen {
   private static func addPadlock(to container: UIView, config: QuoteCatalog.Config) {
     let colour: UIColor = config.isDark ? .white : .black
     let symbol = UIImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-    // COLOURED INTO THE IMAGE, not left to `tintColor`.
-    //
-    // A UIImageView only honours `tintColor` for a template image, and
-    // `UIImage(systemName:)` hands back `.automatic`, which a plain image view
-    // renders as the symbol's own colour: black. A black padlock on a black
-    // cover is a padlock nobody can see, and the lock looked broken when the
-    // only thing missing was its colour. UIButton resolves this on its own,
-    // which is why Copy and Share showed up and this did not.
+    // Coloured into the image rather than left to `tintColor`, which a plain
+    // UIImageView only honours for a template image. See `docs/native-notes.md`,
+    // "SF Symbols in a UIImageView".
     let glyph = UIImage(systemName: "lock.fill", withConfiguration: symbol)?
       .withTintColor(colour.withAlphaComponent(0.4), renderingMode: .alwaysOriginal)
     let lock = UIImageView(image: glyph)
@@ -1073,20 +1033,12 @@ enum QuoteScreen {
   /// is what it always claimed to be and what the header of this file says the
   /// frame wait exists to guarantee.
   /// How long after the app becomes active before a touch is actually
-  /// delivered to it.
+  /// delivered to it. Measured, not guessed: `docs/native-notes.md`, "The dead
+  /// 420 milliseconds".
   ///
-  /// MEASURED, not guessed. A trace of eleven real widget taps on an iPhone 17
-  /// Pro: the relay starts at 0, `didBecomeActive` lands at 0.21 to 0.23, and
-  /// the earliest touch the app ever saw was 0.42. Never once earlier, and not
-  /// on the host window either, which listens precisely to catch that case.
-  /// For that first stretch the finger belongs to the home screen and iOS does
-  /// not hand it over.
-  ///
-  /// Without this the duration was being spent on a picture: the phrase is
-  /// visible from 0 because the system is replaying the snapshot, so a "1.5
-  /// second" cover offered 1.36 seconds you could touch and 0.4 you could only
-  /// look at. Adding it back is what makes the number in the Phrases screen
-  /// mean what it says.
+  /// Without it the chosen duration is partly spent on a picture the user
+  /// cannot touch, and the number in the Phrases screen stops meaning what it
+  /// says.
   private static let touchSettleDelay: TimeInterval = 0.25
 
   private static func countDown(_ seconds: TimeInterval, token: Int) {

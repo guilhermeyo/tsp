@@ -168,8 +168,21 @@ A widget tap can never open a third-party app directly. Never put a third-party 
   home screen reads has to be translated in the user's head. Switching language renames only a row
   that still carries the OUTGOING language's default; anything the user renamed is theirs and never
   moves. The Swift mirror is English only, and the comment there explains why.
-- **Comment WHY, not WHAT.** The native files are teaching material and should be commented
-  generously. Obvious TypeScript should not be commented at all.
+- **Comment WHY, not WHAT.** Obvious TypeScript should not be commented at all. The native files
+  carry more, but there is a place for each kind and the code is only one of them:
+
+  | Kind | Where it goes |
+  | --- | --- |
+  | An invariant that breaks something if ignored | **In the code**, short, at the line that would break it |
+  | A platform fact that cost hours to learn | **`docs/native-notes.md`**, with a one-line pointer from the code |
+  | A design tension and the option rejected | **`docs/native-notes.md`**, same |
+  | What used to be there and why it was wrong | **The commit message**, and nowhere else |
+
+  The last row is the one that inflates files. It is already in `git log`, and repeating it beside
+  the code buys nothing while making the code harder to read.
+
+  As a rough gauge, the native files sit around 40 percent comment. Well past that usually means
+  narrative has leaked in from the last row.
 - The `?? .standard` fallback in `ConfigStore.swift` and `LauncherNativeModule.swift` is
   intentional. Do not remove it. See the App Group story in `README.md`.
 

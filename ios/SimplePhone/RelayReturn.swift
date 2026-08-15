@@ -1,38 +1,28 @@
 import Foundation
 
 /// Decides whether coming back to the app should show the phrase you just left
-/// on, instead of dropping you straight into the list.
+/// on, and where you were going when you left it.
 ///
-/// The point is the miss. Holding the cover to read a line is a race against a
-/// window iOS does not open for the first 400ms of a relay, so sometimes the
-/// app is gone before your thumb lands. Rather than keep fighting for those
-/// milliseconds, the line is still there when you come back: tap the `TSP`
-/// breadcrumb iOS puts in the status bar and the phrase is waiting, with how
-/// many times it has come up and a way into the app.
+/// Holding the cover to read is a race the platform does not always let you
+/// win, so a missed line is recoverable instead. Only a return that follows a
+/// HANDOFF earns the card: the cover goes up on every backgrounding, including
+/// a plain swipe home, so anything looser would put a card in front of the list
+/// every time the app is opened.
 ///
-/// NO UIKit, so `scripts/test-relay-gate` compiles this file and drives every
-/// case, and no clock, so those cases are not timing-dependent. Time arrives as
-/// an argument.
-///
-/// WHY IT IS NOT ENOUGH TO ASK "did we just relay". The cover goes up on EVERY
-/// backgrounding, including a plain swipe to the home screen, because that is
-/// what makes the system snapshot carry a phrase. Keeping it up on every return
-/// would put a card in front of the list every single time the app is opened.
-/// Only a return that follows a HANDOFF earns it.
+/// Foundation only and no clock, for the same reasons as `RelayGate`: it is
+/// what lets `scripts/test-relay-gate` compile this file and drive every case.
+/// Why the race exists at all is in `docs/native-notes.md`, "The relay cover".
 struct RelayReturn {
-  /// How long a miss stays worth recovering.
-  ///
-  /// A judgement call, and the one number here that is not derived from
-  /// anything. Two minutes covers the actual case (the app opened, the line was
-  /// gone, you want it back) without ambushing someone who spent a while in
-  /// WhatsApp and came back to launch something else.
+  /// How long a miss stays worth recovering. A judgement call: long enough for
+  /// "the app opened, the line was gone, I want it back", short enough not to
+  /// ambush someone coming back to launch something else.
   static let window: TimeInterval = 120
 
-  /// What the card is owed: the line, and the place the user was going.
+  /// The line, and the place the user was headed.
   struct Missed {
     let phrase: String
-    /// Nil when the relay had no usable target, which cannot happen through
-    /// the widget but can through a hand-typed URL.
+    /// Nil when the relay had no usable target, which the widget cannot produce
+    /// but a hand-typed URL can.
     let target: URL?
   }
 
@@ -40,21 +30,18 @@ struct RelayReturn {
   private var phrase: String?
   private var target: URL?
 
-  /// The target was asked to open, and this is the line that was on screen when
-  /// it happened. Recorded here rather than read back later because
-  /// backgrounding rolls the NEXT phrase to paint into the snapshot, so by the
-  /// time anyone comes back the stored `current` is a different line.
+  /// The target was asked to open, with this line on screen. Recorded rather
+  /// than read back later, because the exit paints the next phrase into the
+  /// snapshot and the stored `current` moves on.
   mutating func handedOff(phrase: String?, target: URL?, at now: TimeInterval) {
     handoffAt = now
     self.phrase = phrase
     self.target = target
   }
 
-  /// The app is being activated. Returns the line to show, or nil to behave as
-  /// before and tear the cover down.
-  ///
-  /// Consuming is the point: a second activation is someone opening the app to
-  /// use it, not someone chasing a line they missed.
+  /// The app is activating. Returns what to show, or nil to tear the cover down
+  /// as usual. Consuming is the point: a second activation is someone opening
+  /// the app to use it.
   mutating func consume(at now: TimeInterval) -> Missed? {
     guard let at = handoffAt else { return nil }
     let line = phrase
@@ -66,14 +53,15 @@ struct RelayReturn {
     return Missed(phrase: line, target: destination)
   }
 
-  /// The relay ended without the app ever leaving: the target refused to open
-  /// and the user is looking at an alert. Nothing was missed, so nothing is
-  /// owed.
+  /// The relay ended without the app leaving: the target refused to open.
+  /// Nothing was missed, so nothing is owed.
   mutating func clear() {
     handoffAt = nil
     phrase = nil
     target = nil
   }
 
+  /// Whether a card is still owed. Also the signal the roll reads on the way
+  /// out, which is why it is not private.
   var isPending: Bool { handoffAt != nil }
 }
