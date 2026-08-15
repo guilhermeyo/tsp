@@ -425,7 +425,6 @@ enum QuoteScreen {
   /// fill is what makes the number tolerable.
   private static let lockDuration: TimeInterval = 1.2
 
-  private static var ring: CALayer?
   private static var lockWork: DispatchWorkItem?
 
   /// A finger arrived on the cover, at `point`.
@@ -435,85 +434,30 @@ enum QuoteScreen {
   /// a press that never reached us: lift, press again, and the ring appears.
   /// That is worth more than any hint text, because it is the truth rather than
   /// a description of it.
-  fileprivate static func fingerArrived(at point: CGPoint) {
-    guard relayInFlight, !gate.locked, ring == nil,
+  /// A finger arrived on the cover: start the clock that pins it.
+  ///
+  /// No drawn ring any more. An earlier version filled a dial under the thumb
+  /// and never once appeared on a device, so it carried no information while
+  /// costing a layer tree per touch. The haptic at the moment of pinning is the
+  /// feedback.
+  fileprivate static func fingerLanded() {
+    guard relayInFlight, !gate.locked, lockWork == nil,
           let root = window?.rootViewController?.view,
           !(root.subviews.compactMap { $0 as? UIStackView }.isEmpty)
     else { return }
 
-    let config = QuoteCatalog.loadConfig()
-    let colour: UIColor = config.isDark ? .white : .black
-    let radius: CGFloat = 32
-
-    // One container for the whole dial, so retiring it later is a single
-    // animation on a single layer rather than three that have to agree.
-    let dial = CALayer()
-    let side = (radius + 6) * 2
-    dial.frame = CGRect(x: point.x - side / 2, y: point.y - side / 2, width: side, height: side)
-    root.layer.addSublayer(dial)
-
-    let centre = CGPoint(x: side / 2, y: side / 2)
-    let circle = UIBezierPath(arcCenter: centre, radius: radius,
-                              startAngle: -.pi / 2, endAngle: 1.5 * .pi, clockwise: true).cgPath
-
-    let track = CAShapeLayer()
-    track.frame = dial.bounds
-    track.path = circle
-    track.fillColor = UIColor.clear.cgColor
-    track.strokeColor = colour.withAlphaComponent(0.12).cgColor
-    track.lineWidth = 3
-    dial.addSublayer(track)
-
-    // The padlock sits INSIDE the dial while it fills, so the ring reads as a
-    // countdown to locking rather than as a countdown to something unnamed.
-    // It is the same glyph that ends up at the top, which is what makes the
-    // two moments feel like one gesture.
-    let glyphConfig = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
-    if let glyph = UIImage(systemName: "lock.fill", withConfiguration: glyphConfig)?
-        .withTintColor(colour.withAlphaComponent(0.45), renderingMode: .alwaysOriginal) {
-      let mark = CALayer()
-      mark.contents = glyph.cgImage
-      mark.contentsScale = UIScreen.main.scale
-      mark.bounds = CGRect(origin: .zero, size: glyph.size)
-      mark.position = centre
-      dial.addSublayer(mark)
-    }
-
-    let progress = CAShapeLayer()
-    progress.frame = dial.bounds
-    progress.path = circle
-    progress.fillColor = UIColor.clear.cgColor
-    progress.strokeColor = colour.withAlphaComponent(0.55).cgColor
-    progress.lineWidth = 3
-    progress.lineCap = .round
-    progress.strokeEnd = 0
-    dial.addSublayer(progress)
-
-    let fill = CABasicAnimation(keyPath: "strokeEnd")
-    fill.fromValue = 0
-    fill.toValue = 1
-    fill.duration = lockDuration
-    fill.fillMode = .forwards
-    fill.isRemovedOnCompletion = false
-    progress.add(fill, forKey: "fill")
-    ring = dial
-
-    // The animation is the picture; this is the fact. Kept separate so a
-    // dropped frame cannot decide whether the cover is pinned.
     let work = DispatchWorkItem { engageLock() }
     lockWork = work
     DispatchQueue.main.asyncAfter(deadline: .now() + lockDuration, execute: work)
   }
 
-  /// The finger left before the ring closed.
+  /// The finger left before it had been down long enough.
   private static func fingerLeft() {
     lockWork?.cancel()
     lockWork = nil
-    ring?.removeFromSuperlayer()
-    ring = nil
   }
 
-  /// The ring closed. From here nothing leaves on its own.
+  /// The finger held long enough. From here nothing leaves on its own.
   private static func engageLock() {
     guard relayInFlight, !gate.locked, let root = window?.rootViewController?.view else { return }
     gate.lock()
@@ -533,26 +477,6 @@ enum QuoteScreen {
       target: Proxy.shared, copy: #selector(Proxy.copyCard),
       share: #selector(Proxy.shareCard), open: #selector(Proxy.dismissCard))
     CoverChrome.addPadlock(to: root, config: config)
-
-    // The ring has said what it had to say. It shrinks away where it stood
-    // while the padlock fades in at the top, so the eye follows one thing
-    // becoming another rather than two unrelated changes.
-    if let ring {
-      let shrink = CABasicAnimation(keyPath: "transform.scale")
-      shrink.toValue = 0.4
-      let fade = CABasicAnimation(keyPath: "opacity")
-      fade.toValue = 0
-      let group = CAAnimationGroup()
-      group.animations = [shrink, fade]
-      group.duration = 0.28
-      group.fillMode = .forwards
-      group.isRemovedOnCompletion = false
-      ring.add(group, forKey: "retire")
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-        ring.removeFromSuperlayer()
-      }
-      self.ring = nil
-    }
 
     let tap = UITapGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.proceedFromLock))
     tap.cancelsTouchesInView = false
@@ -935,15 +859,10 @@ enum QuoteScreen {
       let down = touches.contains { $0.phase != .ended && $0.phase != .cancelled }
       if down {
         QuoteScreen.gate.press()
-        // The ring has to start here too. This is the ONLY place a finger that
-        // landed during the app-switch animation is ever seen: it produces no
-        // `touchesBegan` on the view, because it began while the home screen
-        // still owned it. Without this the case the whole stationary-finger
-        // path was built for could hold the cover but never draw a ring, and
-        // so could never pin it.
-        if let point = touches.first?.location(in: rootViewController?.view) {
-          QuoteScreen.fingerArrived(at: point)
-        }
+        // Also here, because this is the ONLY place a finger that landed during
+        // the app-switch animation is seen: it produces no `touchesBegan` on
+        // the view, having begun while the home screen still owned it.
+        QuoteScreen.fingerLanded()
       } else {
         QuoteScreen.gate.release()
       }
@@ -965,7 +884,7 @@ enum QuoteScreen {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesBegan(touches, with: event)
       QuoteScreen.gate.press()
-      if let point = touches.first?.location(in: self) { QuoteScreen.fingerArrived(at: point) }
+      QuoteScreen.fingerLanded()
     }
 
     /// A finger that was ALREADY DOWN when the cover became touchable.
@@ -984,9 +903,9 @@ enum QuoteScreen {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesMoved(touches, with: event)
       QuoteScreen.gate.press()
-      // The finger that landed during the animation has no `began` here, so
-      // this is where its ring starts. `fingerArrived` ignores repeats.
-      if let point = touches.first?.location(in: self) { QuoteScreen.fingerArrived(at: point) }
+      // The finger that landed during the animation has no `began` here.
+      // `fingerLanded` ignores repeats.
+      QuoteScreen.fingerLanded()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
