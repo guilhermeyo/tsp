@@ -145,6 +145,40 @@ enum QuoteScreen {
     relayInFlight = true
     relayPhrase = nil
     clearCoverGestures()
+    // A CARD STILL OWED WHEN A NEW RELAY STARTS WAS NEVER COLLECTED.
+    //
+    // The user went back to the home screen and launched something else instead
+    // of tapping the breadcrumb, so the line they were offered is one they chose
+    // not to read. That is the signal the roll needs: keeping a phrase for a
+    // return nobody makes is what froze the line for anyone who only ever taps
+    // the widget.
+    if pendingReturn.isPending {
+      rollOwed = true
+      pendingReturn.clear()
+    }
+  }
+
+  /// Set when a return went uncollected, and honoured at the next exit.
+  ///
+  /// This is the whole of the tension between two real bugs. Rolling on the way
+  /// out makes the snapshot iOS replays carry a line the card then has to
+  /// correct, which the user sees as a phrase changing under them on the way
+  /// back. Not rolling keeps the line still, which is the older and worse bug.
+  ///
+  /// So the exit that ends a relay someone may come back to keeps its line, and
+  /// the exit after one they walked away from rolls. A phrase is shown at most
+  /// twice to somebody who never comes back, and never twice to somebody who
+  /// does.
+  private static var rollOwed = false
+
+  /// The line already on the cover, neither re-drawn nor re-counted.
+  ///
+  /// Falls back to the stored `current` because `relayPhrase` lives only as long
+  /// as the process, and repainting the cover blank would be worse than
+  /// repainting it the same.
+  private static func keptQuote(_ config: QuoteCatalog.Config) -> QuoteCatalog.Quote? {
+    guard let text = relayPhrase ?? QuoteCatalog.loadStats().current else { return nil }
+    return config.items.first { $0.text == text }
   }
 
   /// Strips the recognisers a pinned cover or a return card left behind.
@@ -217,7 +251,16 @@ enum QuoteScreen {
     let config = QuoteCatalog.loadConfig()
 
     if forSnapshot {
-      let next = QuoteCatalog.roll(config)
+      let next: QuoteCatalog.Quote?
+      if rollOwed || !pendingReturn.isPending {
+        next = QuoteCatalog.roll(config)
+        rollOwed = false
+      } else {
+        // Keeping what is already there: this exit ends a relay whose line the
+        // user can still come back for, so the snapshot has to carry that line
+        // and not its replacement.
+        next = keptQuote(config)
+      }
       if window == nil {
         show(config, phrase: next, in: appWindow ?? hostWindow, forSnapshot: true)
       } else {
