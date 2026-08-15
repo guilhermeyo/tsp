@@ -67,6 +67,30 @@ final class RelayGate {
   func arm(_ work: @escaping () -> Void) -> Int {
     cycle &+= 1
     open = work
+    // A NEW COVER CANNOT INHERIT THE OLD ONE'S PIN, NOR ITS FINGER.
+    //
+    // Nothing else clears it on the one path that matters: a pinned cover the
+    // user walks away from. Swiping home ends the relay through `endRelay`,
+    // which only drops `relayInFlight`, and `dismiss` refuses to run while a
+    // relay is in flight, so `reset` is never reached. The pin then outlives
+    // its cover, and the next relay arms behind a lock with no ring, no
+    // controls and no gestures left on screen: a full-screen phrase with no way
+    // out and no way through.
+    //
+    // The finger has to go with it, and the lock is what tells the two cases
+    // apart. `isHeld` is normally PRESERVED across arming, because a press can
+    // legitimately land before the relay is armed and throwing it away costs
+    // the user their hold. But a press that was still down when the cover was
+    // pinned belongs to that cover, not to this one: nobody holds a phone
+    // through someone else's launch.
+    //
+    // Here rather than in the caller because arming IS the start of a cover,
+    // and a rule this expensive to get wrong should not depend on every future
+    // caller remembering it.
+    if isLocked {
+      isLocked = false
+      isHeld = false
+    }
     isDue = isHeld
     return cycle
   }

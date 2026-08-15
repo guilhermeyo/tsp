@@ -326,6 +326,11 @@ enum QuoteScreen {
     // that dismisses it would leave the gate holding, and the NEXT relay would
     // inherit a finger that is not there.
     gate.reset()
+    // The pinned cover leaves a tap and a pan behind, and this adds its own.
+    // Without stripping first they stack on the same view, and the card's
+    // recogniser would be competing with a tap that means "carry on" for a
+    // cover that no longer exists.
+    clearCoverGestures()
 
     let config = loadConfig()
     let author = config.items.first { $0.text == text }?.author
@@ -424,7 +429,7 @@ enum QuoteScreen {
   /// a press that never reached us: lift, press again, and the ring appears.
   /// That is worth more than any hint text, because it is the truth rather than
   /// a description of it.
-  private static func fingerArrived(at point: CGPoint) {
+  fileprivate static func fingerArrived(at point: CGPoint) {
     guard relayInFlight, !gate.locked, ring == nil,
           let root = window?.rootViewController?.view,
           !(root.subviews.compactMap { $0 as? UIStackView }.isEmpty)
@@ -1113,6 +1118,15 @@ enum QuoteScreen {
       let down = touches.contains { $0.phase != .ended && $0.phase != .cancelled }
       if down {
         QuoteScreen.gate.press()
+        // The ring has to start here too. This is the ONLY place a finger that
+        // landed during the app-switch animation is ever seen: it produces no
+        // `touchesBegan` on the view, because it began while the home screen
+        // still owned it. Without this the case the whole stationary-finger
+        // path was built for could hold the cover but never draw a ring, and
+        // so could never pin it.
+        if let point = touches.first?.location(in: rootViewController?.view) {
+          QuoteScreen.fingerArrived(at: point)
+        }
       } else {
         QuoteScreen.gate.release()
       }

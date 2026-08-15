@@ -431,6 +431,31 @@ enum RelayGateTests {
     check(ret.consume(at: 1002) == nil, "the destination does not linger either")
   }
 
+
+  /// THE DEAD COVER, and the reason `arm` cannot be trusted to inherit state.
+  ///
+  /// A pinned cover that the user walks away from instead of dismissing:
+  /// they swipe home. The relay ends without `proceed` and without `reset`,
+  /// because `endRelay` only clears `relayInFlight` and `dismiss` refuses to
+  /// run while a relay is in flight. The pin outlives its cover.
+  ///
+  /// The next relay then arms behind a lock nobody can see, with no ring, no
+  /// chrome and no gestures left on screen: a full-screen phrase above
+  /// everything, with no way out and no way through. A launcher that never
+  /// launches, which the header of this file calls the worst failure it has.
+  static func testAnAbandonedLockDoesNotPoisonTheNextRelay() {
+    let gate = RelayGate()
+    gate.arm {}
+    gate.press()
+    gate.lock()
+    // The user swipes home. Nothing else happens: no proceed, no reset.
+
+    var opened = 0
+    let token = gate.arm { opened += 1 }
+    gate.durationElapsed(token)
+    check(opened == 1, "a relay after an abandoned lock still opens")
+  }
+
   static func main() {
     testOpensWhenDurationRunsOut()
     testInstantStillFreezesUnderAFinger()
@@ -468,6 +493,7 @@ enum RelayGateTests {
     testStaleTickCannotOpenAfterProceed()
     testLockWithoutPressStillBlocks()
     testLockedIsVisible()
+    testAnAbandonedLockDoesNotPoisonTheNextRelay()
 
     print("")
     if failures == 0 {
