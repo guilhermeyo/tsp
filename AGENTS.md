@@ -30,9 +30,10 @@ index.js                  the entry point. `main` in package.json points HERE, n
                           expo-router/entry, so the debug overlay can load first.
 app.json                  JS-side config only: scheme, name, build properties.
 ios/                      the Xcode project. TWO TARGETS. COMMITTED. SOURCE.
-  SimplePhone/            the app target. AppDelegate (the relay), QuoteScreen (the
-                          cover), QuoteCatalog (phrases and tallies), RelayGate and
-                          RelayReturn (the two pure rules).
+  SimplePhone/            the app target. AppDelegate (the relay), QuoteScreen (when the
+                          cover exists), CoverChrome (what it looks like), QuoteCatalog
+                          (phrases and tallies), RelayGate and RelayReturn (the two
+                          pure rules, Foundation only, the only tested Swift here).
   SimplePhoneWidget/      Swift for the WidgetKit extension.
 modules/launcher-native/  Swift for the local Expo module.          COMMITTED. SOURCE.
 src/                      the React Native app. TypeScript, strict.

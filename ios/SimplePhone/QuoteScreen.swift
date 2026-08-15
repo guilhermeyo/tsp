@@ -350,8 +350,11 @@ enum QuoteScreen {
     root.subviews.forEach { $0.removeFromSuperview() }
     let phrase = QuoteCatalog.Quote(text: text, author: author)
     cardPhrase = phrase
-    let stack = fill(root, config: config, phrase: phrase)
-    addCardChrome(to: root, below: stack, config: config, count: count)
+    let stack = CoverChrome.fill(root, config: config, phrase: phrase)
+    tallyLabel = CoverChrome.addCardChrome(
+      to: root, below: stack, config: config, count: count,
+      target: Proxy.shared, copy: #selector(Proxy.copyCard),
+      share: #selector(Proxy.shareCard), open: #selector(Proxy.dismissCard))
     shade?.removeFromSuperview()
     shade = nil
 
@@ -525,8 +528,11 @@ enum QuoteScreen {
     let config = QuoteCatalog.loadConfig()
     let count = relayPhrase.map { QuoteCatalog.loadStats().counts[$0] ?? 0 } ?? 0
     let stack = root.subviews.compactMap { $0 as? UIStackView }.first
-    addCardChrome(to: root, below: stack, config: config, count: count)
-    addPadlock(to: root, config: config)
+    tallyLabel = CoverChrome.addCardChrome(
+      to: root, below: stack, config: config, count: count,
+      target: Proxy.shared, copy: #selector(Proxy.copyCard),
+      share: #selector(Proxy.shareCard), open: #selector(Proxy.dismissCard))
+    CoverChrome.addPadlock(to: root, config: config)
 
     // The ring has said what it had to say. It shrinks away where it stood
     // while the padlock fades in at the top, so the eye follows one thing
@@ -557,26 +563,6 @@ enum QuoteScreen {
     root.addGestureRecognizer(drag)
   }
 
-  /// The padlock, opposite the copy and share controls, saying the cover is
-  /// pinned rather than merely slow.
-  private static func addPadlock(to container: UIView, config: QuoteCatalog.Config) {
-    let colour: UIColor = config.isDark ? .white : .black
-    let symbol = UIImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-    // Coloured into the image rather than left to `tintColor`, which a plain
-    // UIImageView only honours for a template image. See `docs/native-notes.md`,
-    // "SF Symbols in a UIImageView".
-    let glyph = UIImage(systemName: "lock.fill", withConfiguration: symbol)?
-      .withTintColor(colour.withAlphaComponent(0.4), renderingMode: .alwaysOriginal)
-    let lock = UIImageView(image: glyph)
-    lock.alpha = 0
-    lock.translatesAutoresizingMaskIntoConstraints = false
-    container.addSubview(lock)
-    NSLayoutConstraint.activate([
-      lock.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 30),
-      lock.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 22),
-    ])
-    UIView.animate(withDuration: 0.28) { lock.alpha = 1 }
-  }
 
   /// The user chose THIS app over the one the row pointed at.
   ///
@@ -621,62 +607,20 @@ enum QuoteScreen {
 
   // MARK: - Taking the line with you
 
-  /// The line as a picture, without any of the card's furniture.
-  ///
-  /// What the card needs on screen and what belongs in something you post are
-  /// different things. A count of how many times a phrase has come up is a fact
-  /// about YOUR phone, and a button labelled "Open The Simple Phone" is a
-  /// control, not content. Both are dropped here, and what replaces them is a
-  /// small wordmark, so the image says where it came from without asking
-  /// anything of whoever sees it.
-  ///
-  /// Rendered from a view that was never on screen, through `layer.render`
-  /// rather than `drawHierarchy`, because the latter needs the view to be in a
-  /// window and this one deliberately is not.
-  private static func cardImage(config: QuoteCatalog.Config, phrase: QuoteCatalog.Quote) -> UIImage? {
-    let size = window?.bounds.size ?? UIScreen.main.bounds.size
-    guard size.width > 0, size.height > 0 else { return nil }
 
-    let canvas = UIView(frame: CGRect(origin: .zero, size: size))
-    fill(canvas, config: config, phrase: phrase)
-
-    let mark = UILabel()
-    mark.text = "The Simple Phone"
-    // Fainter than the attribution on the card, which is already secondary.
-    // A signature, not a caption.
-    mark.textColor = (config.isDark ? UIColor.white : .black).withAlphaComponent(0.3)
-    mark.font = font(for: config, size: 13)
-    mark.textAlignment = .center
-    mark.translatesAutoresizingMaskIntoConstraints = false
-    canvas.addSubview(mark)
-    NSLayoutConstraint.activate([
-      mark.centerXAnchor.constraint(equalTo: canvas.centerXAnchor),
-      mark.bottomAnchor.constraint(equalTo: canvas.bottomAnchor, constant: -56),
-    ])
-
-    canvas.setNeedsLayout()
-    canvas.layoutIfNeeded()
-
-    let renderer = UIGraphicsImageRenderer(bounds: canvas.bounds)
-    return renderer.image { context in canvas.layer.render(in: context.cgContext) }
-  }
-
-  /// The phrase as text, the way a person would write it down.
-  private static func cardText(_ phrase: QuoteCatalog.Quote) -> String {
-    guard let author = phrase.author, !author.isEmpty else { return phrase.text }
-    return "\(phrase.text)\n\u{2014}\u{2009}\(author)"
-  }
 
   fileprivate static func copyCard() {
     guard let phrase = cardPhrase else { return }
-    UIPasteboard.general.string = cardText(phrase)
+    UIPasteboard.general.string = CoverChrome.cardText(phrase)
     flashConfirmation()
   }
 
   fileprivate static func shareCard() {
     guard let phrase = cardPhrase, let presenter = window?.rootViewController else { return }
-    var items: [Any] = [cardText(phrase)]
-    if let image = cardImage(config: QuoteCatalog.loadConfig(), phrase: phrase) {
+    var items: [Any] = [CoverChrome.cardText(phrase)]
+    let size = window?.bounds.size ?? UIScreen.main.bounds.size
+    if let image = CoverChrome.cardImage(config: QuoteCatalog.loadConfig(), phrase: phrase,
+                                         size: size) {
       items.insert(image, at: 0)
     }
     let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
@@ -700,73 +644,7 @@ enum QuoteScreen {
   private static var cardPhrase: QuoteCatalog.Quote?
   private static weak var tallyLabel: UILabel?
 
-  /// A glyph you can find but not trip over: dimmed to the same weight as the
-  /// attribution, with a touch target far larger than the icon it draws.
-  private static func chromeButton(symbol: String, label: String,
-                                   action: Selector, tint: UIColor) -> UIButton {
-    let button = UIButton(type: .system)
-    let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
-    button.setImage(UIImage(systemName: symbol, withConfiguration: config), for: .normal)
-    button.tintColor = tint.withAlphaComponent(0.45)
-    button.accessibilityLabel = label
-    button.addTarget(Proxy.shared, action: action, for: .touchUpInside)
-    button.translatesAutoresizingMaskIntoConstraints = false
-    button.widthAnchor.constraint(equalToConstant: 44).isActive = true
-    button.heightAnchor.constraint(equalToConstant: 44).isActive = true
-    return button
-  }
 
-  /// The count and the way back, under the line.
-  private static func addCardChrome(to container: UIView, below stack: UIStackView?,
-                                    config: QuoteCatalog.Config, count: Int) {
-    let foreground: UIColor = config.isDark ? .white : .black
-    let strings = QuoteCatalog.relayStrings(language: config.language)
-
-    let tally = UILabel()
-    tally.text = count == 1
-      ? (strings["shownOnce"] ?? "shown once")
-      : String(format: strings["shownTimes"] ?? "shown %@ times", "\(count)")
-    // Dimmer than the attribution, which is already secondary. This is a
-    // footnote about a phrase, not part of it.
-    tally.textColor = foreground.withAlphaComponent(0.35)
-    tally.font = font(for: config, size: 13)
-    tally.textAlignment = .center
-    tally.translatesAutoresizingMaskIntoConstraints = false
-    tallyLabel = tally
-
-    let back = UIButton(type: .system)
-    back.setTitle(strings["openApp"] ?? "Open The Simple Phone", for: .normal)
-    back.setTitleColor(foreground.withAlphaComponent(0.5), for: .normal)
-    back.titleLabel?.font = font(for: config, size: 15)
-    back.addTarget(Proxy.shared, action: #selector(Proxy.dismissCard), for: .touchUpInside)
-    back.translatesAutoresizingMaskIntoConstraints = false
-
-    let copy = chromeButton(symbol: "doc.on.doc", label: strings["copy"] ?? "Copy",
-                            action: #selector(Proxy.copyCard), tint: foreground)
-    let share = chromeButton(symbol: "square.and.arrow.up", label: strings["share"] ?? "Share",
-                             action: #selector(Proxy.shareCard), tint: foreground)
-
-    container.addSubview(tally)
-    container.addSubview(back)
-    container.addSubview(copy)
-    container.addSubview(share)
-    NSLayoutConstraint.activate([
-      share.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-      share.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 8),
-      copy.trailingAnchor.constraint(equalTo: share.leadingAnchor, constant: -4),
-      copy.centerYAnchor.constraint(equalTo: share.centerYAnchor),
-    ])
-    NSLayoutConstraint.activate([
-      tally.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-      // Under the LINE, not under the middle of the screen. A four line phrase
-      // reaches well past centre, and anchoring to the centre printed the count
-      // straight through the attribution.
-      tally.topAnchor.constraint(equalTo: stack?.bottomAnchor ?? container.centerYAnchor,
-                                 constant: 28),
-      back.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-      back.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.bottomAnchor, constant: -28),
-    ])
-  }
 
   /// Where the failure alert should be presented from. The cover is normally
   /// gone by then (`dismissForFailure`), so this is the app's own root; the
@@ -804,7 +682,7 @@ enum QuoteScreen {
     // window created with `forSnapshot: true` is the very one the user's finger
     // lands on in the common case. Only the `shade` copy below stays inert.
     controller.view = CoverView(frame: overlay.bounds)
-    fill(controller.view, config: config, phrase: phrase)
+    CoverChrome.fill(controller.view, config: config, phrase: phrase)
     overlay.backgroundColor = controller.view.backgroundColor
     overlay.rootViewController = controller
     overlay.makeKeyAndVisible()
@@ -812,7 +690,7 @@ enum QuoteScreen {
     if let host = appWindow ?? hostWindow, host !== overlay {
       let copy = UIView(frame: host.bounds)
       copy.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-      fill(copy, config: config, phrase: phrase)
+      CoverChrome.fill(copy, config: config, phrase: phrase)
       shade?.removeFromSuperview()
       host.addSubview(copy)
       shade = copy
@@ -855,13 +733,13 @@ enum QuoteScreen {
 
     if let root = overlay.rootViewController {
       root.view.subviews.forEach { $0.removeFromSuperview() }
-      fill(root.view, config: config, phrase: phrase)
+      CoverChrome.fill(root.view, config: config, phrase: phrase)
       overlay.backgroundColor = root.view.backgroundColor
       root.view.layoutIfNeeded()
     }
     if let shade = shade {
       shade.subviews.forEach { $0.removeFromSuperview() }
-      fill(shade, config: config, phrase: phrase)
+      CoverChrome.fill(shade, config: config, phrase: phrase)
       shade.layoutIfNeeded()
     }
     CATransaction.flush()
@@ -875,57 +753,6 @@ enum QuoteScreen {
   /// Paints `container` as the cover. No phrase means a plain themed field --
   /// deliberately, because that is still not the app list.
   @discardableResult
-  private static func fill(_ container: UIView, config: QuoteCatalog.Config, phrase: QuoteCatalog.Quote?) -> UIStackView? {
-    let background: UIColor = config.isDark ? .black : .white
-    container.backgroundColor = background
-    container.isOpaque = true
-    guard let phrase, !phrase.text.isEmpty else { return nil }
-
-    let foreground: UIColor = config.isDark ? .white : .black
-
-    let label = UILabel()
-    label.text = phrase.text
-    label.textColor = foreground
-    label.font = font(for: config)
-    label.numberOfLines = 0
-    label.textAlignment = .center
-    label.adjustsFontSizeToFitWidth = true
-    label.minimumScaleFactor = 0.6
-
-    // A STACK, not a second free-floating label, so the pair stays optically
-    // centred: with no author the line sits exactly where it always did, and
-    // with one the two centre together rather than the phrase shifting up by
-    // however tall the credit happens to be.
-    let stack = UIStackView(arrangedSubviews: [label])
-    stack.axis = .vertical
-    stack.alignment = .fill
-    stack.spacing = 10
-    stack.translatesAutoresizingMaskIntoConstraints = false
-
-    if let author = phrase.author, !author.isEmpty {
-      let credit = UILabel()
-      // An en dash and a thin space, which is how a printed attribution is set.
-      credit.text = "\u{2013}\u{2009}\(author)"
-      // Dimmed as well as smaller. At 55 percent it reads as secondary at a
-      // glance, which matters when the whole thing is on screen for under a
-      // second and the phrase is what should be read first.
-      credit.textColor = foreground.withAlphaComponent(0.55)
-      credit.font = font(for: config, size: 15)
-      credit.numberOfLines = 1
-      credit.textAlignment = .center
-      credit.adjustsFontSizeToFitWidth = true
-      credit.minimumScaleFactor = 0.6
-      stack.addArrangedSubview(credit)
-    }
-
-    container.addSubview(stack)
-    NSLayoutConstraint.activate([
-      stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-      stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32),
-      stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -32),
-    ])
-    return stack
-  }
 
   /// `connectedScenes` is an unordered Set, so the old
   /// `connectedScenes.first as? UIWindowScene` cast an ARBITRARY element and
@@ -1240,19 +1067,4 @@ enum QuoteScreen {
 
   // MARK: - Type
 
-  /// Mirrors the widget's `Theme.widgetFont`: same family choice, one size
-  /// down, because this is a full screen holding one line rather than a widget
-  /// holding six.
-  private static func font(for config: QuoteCatalog.Config, size: CGFloat = 30) -> UIFont {
-    let base = UIFont.systemFont(ofSize: size, weight: .semibold)
-    let design: UIFontDescriptor.SystemDesign
-    switch config.font {
-    case "monospaced": design = .monospaced
-    case "rounded": design = .rounded
-    case "serif": design = .serif
-    default: return base
-    }
-    guard let descriptor = base.fontDescriptor.withDesign(design) else { return base }
-    return UIFont(descriptor: descriptor, size: size)
-  }
 }
