@@ -269,6 +269,21 @@ enum QuoteScreen {
     } else if window == nil {
       // Reachable only on a COLD relay: a warm one always finds the cover the
       // last backgrounding left standing. See `restoreOrRoll`.
+      // A COLD RELAY IS PROOF THAT ANY EARLIER RETURN WENT UNCOLLECTED.
+      //
+      // `pendingReturn` lives in memory and nowhere else, so a process that was
+      // killed between relays takes the evidence with it. Without this the exit
+      // always found a fresh pending return, always kept the line, and the next
+      // cold relay restored the very same one: the phrase froze for good.
+      //
+      // And cold is the ORDINARY case for a launcher. Tap a row, land in
+      // Instagram, and iOS reclaims the launcher long before you come back.
+      // The warm path was the only one being reasoned about.
+      //
+      // Marked rather than rolled, because this relay must keep showing the
+      // line the dead process painted into the snapshot. Rolling is for the way
+      // out.
+      rollOwed = true
       let drawn = QuoteCatalog.restoreOrRoll(config)
       relayPhrase = drawn?.text
       show(config, phrase: drawn, in: appWindow ?? hostWindow, forSnapshot: false)
