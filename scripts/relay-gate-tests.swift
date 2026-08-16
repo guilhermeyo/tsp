@@ -456,6 +456,28 @@ enum RelayGateTests {
     check(opened == 1, "a relay after an abandoned lock still opens")
   }
 
+  /// The countdown ring is animated by the caller, not by the gate, so it needs
+  /// the same staleness check the tick has: a drain scheduled for the relay
+  /// before this one must not start sweeping the badge of the current cover.
+  static func testATokenKnowsWhichRelayItBelongsTo() {
+    let gate = RelayGate()
+    let first = gate.arm {}
+    check(gate.isCurrent(first), "the token just handed out is the current one")
+    let second = gate.arm {}
+    check(!gate.isCurrent(first), "the previous relay's token has gone stale")
+    check(gate.isCurrent(second), "the new one is current")
+  }
+
+  /// Tearing the cover down invalidates everything, the same way it invalidates
+  /// a pending tick. A drain that fired after a dismiss would animate a badge
+  /// that is no longer on screen at best, and the NEXT cover's at worst.
+  static func testResetStalesEveryToken() {
+    let gate = RelayGate()
+    let token = gate.arm {}
+    gate.reset()
+    check(!gate.isCurrent(token), "reset stales the token it had handed out")
+  }
+
   static func main() {
     testOpensWhenDurationRunsOut()
     testInstantStillFreezesUnderAFinger()
@@ -494,6 +516,8 @@ enum RelayGateTests {
     testLockWithoutPressStillBlocks()
     testLockedIsVisible()
     testAnAbandonedLockDoesNotPoisonTheNextRelay()
+    testATokenKnowsWhichRelayItBelongsTo()
+    testResetStalesEveryToken()
 
     print("")
     if failures == 0 {

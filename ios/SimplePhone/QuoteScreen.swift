@@ -425,72 +425,47 @@ enum QuoteScreen {
   /// fill is what makes the number tolerable.
   private static let lockDuration: TimeInterval = 1.2
 
-  private static var ring: CALayer?
+  /// The badge on the live cover.
+  ///
+  /// Weak on purpose: the view hierarchy owns it, and every path that rebuilds
+  /// the cover -- `refill`, `presentCard`, `dismiss` -- takes it down with the
+  /// rest of the subviews without having to know it exists.
+  private static weak var badge: CoverChrome.Badge?
+
+  /// A finger is on the cover right now. Not the same question as `gate.locked`:
+  /// this one is about the badge, which has a state for held that is not the
+  /// state for pinned.
+  private static var isHolding = false
+
   private static var lockWork: DispatchWorkItem?
 
-  /// A finger arrived on the cover, at `point`.
+  /// The phrase's own clock, started at the moment the cover becomes touchable
+  /// rather than at the moment the relay began. Why they are different, and why
+  /// this is the honest one: `docs/native-notes.md`, "A countdown that cannot
+  /// lie".
+  private static func startCountdown(_ seconds: TimeInterval, token: Int) {
+    // A drain left over from the relay before this one would sweep the badge of
+    // a cover it knows nothing about. Same staleness as the tick, same answer.
+    guard gate.isCurrent(token), relayInFlight, !gate.locked, !isHolding else { return }
+    badge?.drain(over: seconds)
+  }
+
+  /// A finger arrived on the cover: freeze the countdown, buzz, and start the
+  /// clock that pins the cover when the ring closes.
   ///
-  /// Also the honest signal that the touch was SEEN. iOS delivers nothing to
-  /// this app for the first ~420ms of a relay, so a press that draws no ring is
-  /// a press that never reached us: lift, press again, and the ring appears.
-  /// That is worth more than any hint text, because it is the truth rather than
-  /// a description of it.
-  /// A finger arrived on the cover: draw the ring and start the clock that pins
-  /// the cover when it closes.
+  /// The buzz and the badge together are the honest signal that the touch was
+  /// SEEN. iOS delivers nothing to this app for the first ~420ms of a widget
+  /// tap, so a press that does not buzz is a press that never arrived: lift and
+  /// press again.
   ///
-  /// The ring is the only feedback a hold can have. iOS delivers nothing to
-  /// this app for the first ~420ms of a widget tap, so a press that draws no
-  /// ring is a press that never arrived: lift and press again. That is the fact
-  /// rather than a description of it.
-  ///
-  /// No glyph inside it. An earlier version drew a padlock at the centre and it
-  /// never rendered on a device, so the ring stands alone.
-  fileprivate static func fingerLanded(at point: CGPoint) {
-    guard relayInFlight, !gate.locked, ring == nil,
-          let root = window?.rootViewController?.view,
-          !(root.subviews.compactMap { $0 as? UIStackView }.isEmpty)
-    else { return }
+  /// No badge means no phrase on the cover -- Phrases switched off, or an empty
+  /// list -- and there is nothing to hold a blank rectangle for.
+  fileprivate static func fingerLanded() {
+    guard relayInFlight, !gate.locked, !isHolding, let badge else { return }
+    isHolding = true
 
-    let colour: UIColor = QuoteCatalog.loadConfig().isDark ? .white : .black
-    let radius: CGFloat = 32
-    let side = (radius + 6) * 2
-
-    // One container, so retiring it later is a single animation on a single
-    // layer rather than two that have to agree.
-    let dial = CALayer()
-    dial.frame = CGRect(x: point.x - side / 2, y: point.y - side / 2, width: side, height: side)
-    root.layer.addSublayer(dial)
-
-    let centre = CGPoint(x: side / 2, y: side / 2)
-    let circle = UIBezierPath(arcCenter: centre, radius: radius,
-                              startAngle: -.pi / 2, endAngle: 1.5 * .pi, clockwise: true).cgPath
-
-    let track = CAShapeLayer()
-    track.frame = dial.bounds
-    track.path = circle
-    track.fillColor = UIColor.clear.cgColor
-    track.strokeColor = colour.withAlphaComponent(0.15).cgColor
-    track.lineWidth = 3
-    dial.addSublayer(track)
-
-    let progress = CAShapeLayer()
-    progress.frame = dial.bounds
-    progress.path = circle
-    progress.fillColor = UIColor.clear.cgColor
-    progress.strokeColor = colour.withAlphaComponent(0.6).cgColor
-    progress.lineWidth = 3
-    progress.lineCap = .round
-    progress.strokeEnd = 0
-    dial.addSublayer(progress)
-
-    let sweep = CABasicAnimation(keyPath: "strokeEnd")
-    sweep.fromValue = 0
-    sweep.toValue = 1
-    sweep.duration = lockDuration
-    sweep.fillMode = .forwards
-    sweep.isRemovedOnCompletion = false
-    progress.add(sweep, forKey: "sweep")
-    ring = dial
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    badge.hold(over: lockDuration)
 
     // The animation is the picture; this is the fact. Kept separate so a
     // dropped frame cannot decide whether the cover is pinned.
@@ -503,8 +478,12 @@ enum QuoteScreen {
   private static func fingerLeft() {
     lockWork?.cancel()
     lockWork = nil
-    ring?.removeFromSuperlayer()
-    ring = nil
+    guard isHolding else { return }
+    isHolding = false
+    // A pin outlives the finger that made it. Without this, lifting off a cover
+    // that has just been pinned would wind the badge back to counting.
+    guard !gate.locked else { return }
+    badge?.releaseHold()
   }
 
   /// The finger held long enough. From here nothing leaves on its own.
@@ -526,24 +505,10 @@ enum QuoteScreen {
       to: root, below: stack, config: config, count: count,
       target: Proxy.shared, copy: #selector(Proxy.copyCard),
       share: #selector(Proxy.shareCard), open: #selector(Proxy.dismissCard))
-    CoverChrome.addPadlock(to: root, config: config)
 
-    // The ring has said what it had to say: it shrinks away where it stood
-    // while the padlock fades in at the top.
-    if let ring {
-      let shrink = CABasicAnimation(keyPath: "transform.scale")
-      shrink.toValue = 0.4
-      let fade = CABasicAnimation(keyPath: "opacity")
-      fade.toValue = 0
-      let group = CAAnimationGroup()
-      group.animations = [shrink, fade]
-      group.duration = 0.28
-      group.fillMode = .forwards
-      group.isRemovedOnCompletion = false
-      ring.add(group, forKey: "retire")
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { ring.removeFromSuperlayer() }
-      self.ring = nil
-    }
+    // The rings have said what they had to say. The pause stays, and it is the
+    // only thing left saying the cover is pinned rather than merely slow.
+    badge?.pinned()
 
     let tap = UITapGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.proceedFromLock))
     tap.cancelsTouchesInView = false
@@ -673,7 +638,11 @@ enum QuoteScreen {
     // window created with `forSnapshot: true` is the very one the user's finger
     // lands on in the common case. Only the `shade` copy below stays inert.
     controller.view = CoverView(frame: overlay.bounds)
-    CoverChrome.fill(controller.view, config: config, phrase: phrase)
+    // No stack means no phrase -- Phrases off, or an empty list -- and a badge
+    // counting down to nothing over a blank rectangle would be furniture.
+    if CoverChrome.fill(controller.view, config: config, phrase: phrase) != nil {
+      badge = CoverChrome.addBadge(to: controller.view, config: config)
+    }
     overlay.backgroundColor = controller.view.backgroundColor
     overlay.rootViewController = controller
     overlay.makeKeyAndVisible()
@@ -681,7 +650,12 @@ enum QuoteScreen {
     if let host = appWindow ?? hostWindow, host !== overlay {
       let copy = UIView(frame: host.bounds)
       copy.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-      CoverChrome.fill(copy, config: config, phrase: phrase)
+      // The shade exists only to be snapshotted, so its badge is never animated
+      // and stays whole. That is the right picture: the snapshot is the stretch
+      // before the countdown has started.
+      if CoverChrome.fill(copy, config: config, phrase: phrase) != nil {
+        CoverChrome.addBadge(to: copy, config: config)
+      }
       shade?.removeFromSuperview()
       host.addSubview(copy)
       shade = copy
@@ -724,13 +698,17 @@ enum QuoteScreen {
 
     if let root = overlay.rootViewController {
       root.view.subviews.forEach { $0.removeFromSuperview() }
-      CoverChrome.fill(root.view, config: config, phrase: phrase)
+      if CoverChrome.fill(root.view, config: config, phrase: phrase) != nil {
+        badge = CoverChrome.addBadge(to: root.view, config: config)
+      }
       overlay.backgroundColor = root.view.backgroundColor
       root.view.layoutIfNeeded()
     }
     if let shade = shade {
       shade.subviews.forEach { $0.removeFromSuperview() }
-      CoverChrome.fill(shade, config: config, phrase: phrase)
+      if CoverChrome.fill(shade, config: config, phrase: phrase) != nil {
+        CoverChrome.addBadge(to: shade, config: config)
+      }
       shade.layoutIfNeeded()
     }
     CATransaction.flush()
@@ -740,10 +718,6 @@ enum QuoteScreen {
     // with no frame wait at all.
     isComposited = true
   }
-
-  /// Paints `container` as the cover. No phrase means a plain themed field --
-  /// deliberately, because that is still not the app list.
-  @discardableResult
 
   /// `connectedScenes` is an unordered Set, so the old
   /// `connectedScenes.first as? UIWindowScene` cast an ARBITRARY element and
@@ -861,6 +835,7 @@ enum QuoteScreen {
 
   private static func countDown(_ seconds: TimeInterval, token: Int) {
     guard UIApplication.shared.applicationState != .active else {
+      startCountdown(seconds, token: token)
       DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { gate.durationElapsed(token) }
       return
     }
@@ -876,6 +851,12 @@ enum QuoteScreen {
       if let waiter = activationWaiter {
         NotificationCenter.default.removeObserver(waiter)
         activationWaiter = nil
+      }
+      // The ring starts where the timer starts, which is also where touch
+      // delivery starts. That alignment is the feature: a ring that is moving
+      // is a cover that can be caught.
+      DispatchQueue.main.asyncAfter(deadline: .now() + touchSettleDelay) {
+        startCountdown(seconds, token: token)
       }
       DispatchQueue.main.asyncAfter(deadline: .now() + touchSettleDelay + seconds) {
         gate.durationElapsed(token)
@@ -929,9 +910,7 @@ enum QuoteScreen {
         // Also here, because this is the ONLY place a finger that landed during
         // the app-switch animation is seen: it produces no `touchesBegan` on
         // the view, having begun while the home screen still owned it.
-        if let point = touches.first?.location(in: rootViewController?.view) {
-          QuoteScreen.fingerLanded(at: point)
-        }
+        QuoteScreen.fingerLanded()
       } else {
         QuoteScreen.gate.release()
       }
@@ -953,7 +932,7 @@ enum QuoteScreen {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesBegan(touches, with: event)
       QuoteScreen.gate.press()
-      if let point = touches.first?.location(in: self) { QuoteScreen.fingerLanded(at: point) }
+      QuoteScreen.fingerLanded()
     }
 
     /// A finger that was ALREADY DOWN when the cover became touchable.
@@ -974,7 +953,7 @@ enum QuoteScreen {
       QuoteScreen.gate.press()
       // The finger that landed during the animation has no `began` here.
       // `fingerLanded` ignores repeats.
-      if let point = touches.first?.location(in: self) { QuoteScreen.fingerLanded(at: point) }
+      QuoteScreen.fingerLanded()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {

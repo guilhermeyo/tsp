@@ -62,6 +62,13 @@ final class RelayGate {
     return cycle
   }
 
+  /// Whether `token` still names the cover on screen.
+  ///
+  /// The tick is not the only thing the caller schedules against a cover: the
+  /// countdown ring is animated from here too, and it needs the same answer for
+  /// the same reason.
+  func isCurrent(_ token: Int) -> Bool { token == cycle }
+
   /// The duration ran out for the relay identified by `token`. A tick from an
   /// older cycle is dropped.
   func durationElapsed(_ token: Int) {
