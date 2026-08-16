@@ -26,13 +26,19 @@ committed source. See `docs/native-notes.md` part 3 and the README section "This
 ## Repo shape
 
 ```
-app.json                  JS-side config only: scheme, name, router, build properties.
+index.js                  the entry point. `main` in package.json points HERE, not at
+                          expo-router/entry, so the debug overlay can load first.
+app.json                  JS-side config only: scheme, name, build properties.
 ios/                      the Xcode project. TWO TARGETS. COMMITTED. SOURCE.
-  SimplePhone/            the app target.
+  SimplePhone/            the app target. AppDelegate (the relay), QuoteScreen (when the
+                          cover exists), CoverChrome (what it looks like), QuoteCatalog
+                          (phrases and tallies), RelayGate and RelayReturn (the two
+                          pure rules, Foundation only, the only tested Swift here).
   SimplePhoneWidget/      Swift for the WidgetKit extension.
 modules/launcher-native/  Swift for the local Expo module.          COMMITTED. SOURCE.
 src/                      the React Native app. TypeScript, strict.
-docs/                     teaching notes.
+scripts/                  the native test runner, and brand asset generation.
+docs/                     teaching notes. Part 4 is the relay cover.
 ```
 
 **`ios/` is source here, not output.** That is the opposite of a default Expo project.
@@ -49,12 +55,13 @@ project was converted to bare deliberately; prebuild is the one command that und
 `pod install` is fine and expected after any JS dependency change. It rewrites `Pods/` and the
 workspace, not `SimplePhone.xcodeproj`.
 
-Changes belong in exactly two places now:
+Changes belong in exactly three places now:
 
 | What you want to change                | Where it goes                        |
 | -------------------------------------- | ------------------------------------ |
 | Bundle id, entitlements, plist, targets | Xcode, in `ios/`                    |
-| Scheme, router, JS-side Expo config     | `app.json`                          |
+| Scheme, JS-side Expo config             | `app.json`                          |
+| Anything that must run before the app   | `index.js`                          |
 
 `app.json` still lists `ios.bundleIdentifier` and `ios.entitlements`. **Those are inert.** They were
 consumed once when the project was generated. Editing them now changes nothing.
@@ -63,6 +70,28 @@ consumed once when the project was generated. Editing them now changes nothing.
 
 `ios/SimplePhoneWidget/` is a `PBXFileSystemSynchronizedRootGroup` (Xcode 16+). Drop a `.swift` file
 in and it joins the target automatically, no pbxproj edit required.
+
+### Adding Swift to the APP target is NOT the same
+
+`ios/SimplePhone/` is **not** a synchronized group. A new `.swift` file there is invisible to the
+build until it is registered in `project.pbxproj` in four places: `PBXBuildFile`, `PBXFileReference`,
+the group's `children`, and the target's `Sources` phase. Mirror an existing entry such as
+`RelayGate.swift` and keep the ids unique.
+
+The failure is loud but misleading: `cannot find 'X' in scope` at every call site, as though the type
+were never written.
+
+### After renaming the project directory
+
+CocoaPods bakes absolute paths into cached podspecs under `~/Library/Caches/CocoaPods`, and
+`pod install` reuses them, so it will happily rewrite the OLD path back into the generated xcconfigs.
+Symptoms are unrelated-looking: a missing `React-VFS.yaml`, or `hermesc: No such file or directory`
+only in Release, since Debug never bundles. Delete the stale cached specs and reinstall:
+
+```bash
+grep -rl "<old-dir-name>" ~/Library/Caches/CocoaPods | xargs rm -f
+cd ios && pod install
+```
 
 ---
 
@@ -168,8 +197,21 @@ A widget tap can never open a third-party app directly. Never put a third-party 
   home screen reads has to be translated in the user's head. Switching language renames only a row
   that still carries the OUTGOING language's default; anything the user renamed is theirs and never
   moves. The Swift mirror is English only, and the comment there explains why.
-- **Comment WHY, not WHAT.** The native files are teaching material and should be commented
-  generously. Obvious TypeScript should not be commented at all.
+- **Comment WHY, not WHAT.** Obvious TypeScript should not be commented at all. The native files
+  carry more, but there is a place for each kind and the code is only one of them:
+
+  | Kind | Where it goes |
+  | --- | --- |
+  | An invariant that breaks something if ignored | **In the code**, short, at the line that would break it |
+  | A platform fact that cost hours to learn | **`docs/native-notes.md`**, with a one-line pointer from the code |
+  | A design tension and the option rejected | **`docs/native-notes.md`**, same |
+  | What used to be there and why it was wrong | **The commit message**, and nowhere else |
+
+  The last row is the one that inflates files. It is already in `git log`, and repeating it beside
+  the code buys nothing while making the code harder to read.
+
+  As a rough gauge, the native files sit around 40 percent comment. Well past that usually means
+  narrative has leaked in from the last row.
 - The `?? .standard` fallback in `ConfigStore.swift` and `LauncherNativeModule.swift` is
   intentional. Do not remove it. See the App Group story in `README.md`.
 
@@ -185,6 +227,10 @@ They look like bugs. They are faithful ports of deliberate behavior:
 - "Choose from catalog" prefills the form only. It never adds or saves anything.
 - Empty-state text uses the theme's font family but not the theme's size.
 - The list has no separators.
+- Returning to a card **after ignoring the previous one** shows the phrase change. One paint cannot
+  serve both the return and the next launch, and this is the chosen place to pay it. "Fixing" it by
+  always keeping the line reintroduces a phrase that never changes. See `docs/native-notes.md`,
+  "One paint, two audiences".
 
 ---
 
@@ -197,6 +243,22 @@ npm test
 cd ios && pod install && cd ..    # only after a JS dependency change
 npx expo run:ios
 ```
+
+**Debug does not link in this project** (`cannot link directly with 'SwiftUICore'`). Build Release
+for a device, which is also what you want anyway: it embeds the JS bundle instead of tying the phone
+to a running Metro.
+
+`react-native-loupe` is a dev dependency and an on-device debug overlay. It is off unless asked for,
+by mechanism rather than by reminder: the require sits inside a `process.env.EXPO_PUBLIC_LOUPE`
+branch that Metro folds away before it collects the dependency graph, so an ordinary build carries
+none of it.
+
+```bash
+EXPO_PUBLIC_LOUPE=1 npx expo run:ios --device <udid> --configuration Release
+```
+
+It sees the JavaScript side only. The relay runs in UIKit before React Native has a bridge, so none
+of that traffic reaches its panels.
 
 ### Tests
 
@@ -211,6 +273,8 @@ places where being wrong is SILENT rather than loud:
 | `switchLanguageItems` | every phrase the user wrote, with no undo |
 | `parseTarget` | a widget tap opening nothing, or the wrong thing |
 | `parseQuoteCounts` | a settings screen crashing on a stale blob |
+| `RelayGate` (native) | a pinned cover with no way out: a launcher that never launches |
+| `RelayReturn` (native) | a missed phrase that cannot be recovered, or one offered forever |
 
 Rules that keep it useful:
 
@@ -237,12 +301,16 @@ test globals do not resolve and `npx tsc --noEmit` fails on every suite.
 ```
 
 `jest-expo` cannot load Swift and the app target has no XCTest bundle, so this
-compiles `ios/SimplePhone/RelayGate.swift` itself against
+compiles the real `RelayGate.swift` and `RelayReturn.swift` against
 `scripts/relay-gate-tests.swift` and runs the cases. **`npm test` does not run
-it.** Run it by hand whenever you touch the relay, the cover or the gate.
+it.** Run it by hand whenever you touch the relay, the cover or either rule.
 
-`RelayGate` may only ever import Foundation. A single `import UIKit` in that
-file deletes the native half's only executable test, and nothing will tell you.
+**Both files may only ever import Foundation.** A single `import UIKit` in
+either deletes the native half's only executable test, and nothing will tell
+you. It is also why anything needing a window lives in `QuoteScreen` instead.
+
+Time is always an argument here, never a wait: `durationElapsed(_:)` and
+`consume(at:)` are called by hand, which is what keeps the cases deterministic.
 
 Full Xcode.app is required. Command Line Tools alone cannot build an iOS app.
 

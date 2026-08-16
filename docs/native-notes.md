@@ -464,3 +464,184 @@ percent even when Reanimated is idle) is:
 Under CNG that edit would be erased by the next prebuild and would need a config plugin to persist.
 Here it is simply a committed file you edit and keep. This is the upside of bare: the escape hatch
 is a one-line change instead of a plugin.
+
+---
+
+# Part 4: The relay cover
+
+A widget row cannot open a third party app. The tap lands here, a full-screen
+cover carries a phrase, and the app forwards you on. Everything below is what
+that round trip actually costs on a device, and none of it is visible in a
+simulator, which refuses third-party schemes.
+
+Read `RelayGate.swift` and `RelayReturn.swift` alongside this. They hold the
+rules; this holds the reasons.
+
+## The dead 420 milliseconds
+
+**iOS delivers no touch to this app for roughly the first 420ms of a widget
+tap.** Measured, not guessed. A trace of eleven real taps on an iPhone 17 Pro
+running iOS 26.6:
+
+| Moment | When |
+| --- | --- |
+| `application(_:open:)` runs | 0 |
+| `didBecomeActive` | 0.21 to 0.23 |
+| earliest touch the app ever saw | 0.42 |
+
+Never once earlier, and not on the host window either, which listens precisely
+to catch that case. For that first stretch the finger belongs to the home
+screen and the system does not hand it over.
+
+Two consequences shaped the whole feature.
+
+**A duration counted from the relay is partly spent on a picture.** The phrase
+is visible from 0 because iOS is replaying the snapshot taken at the last
+backgrounding, so a "1.5 second" cover used to offer 1.36 seconds you could
+touch and 0.4 you could only look at. The countdown now starts after
+`touchSettleDelay`, so the number in the Phrases screen means what it says.
+
+**A press on reflex cannot work, and no API can see it.** This is why the ring
+under the thumb matters beyond decoration: a press that draws no ring is a press
+that never arrived. Lift, press again. That is the fact rather than a
+description of it, which is worth more than any hint text.
+
+The ring carries nothing at its centre. A padlock glyph was drawn there once and
+never rendered on a device, while the ring around it always did. An indicator
+that cannot render is worse than none, because it reads as the feature being
+broken, so it went and the ring stayed.
+
+## Touches on the cover
+
+The cover is its own `UIWindow` above everything, and touches reach it three
+different ways depending on when the finger lands.
+
+**`CoverView.touchesBegan`** is the ordinary case.
+
+**`CoverView.touchesMoved`** is the finger that landed during the app-switch
+animation. It produces no `touchesBegan` here, having begun while the home
+screen still owned it, and surfaces only once it moves.
+
+**`CoverWindow.sendEvent`** is the same finger when it does not move at all.
+`UIEvent.allTouches` carries touches in the `.stationary` phase, which produce
+no view callbacks whatsoever. Without this the stationary-finger case could
+hold the cover but never draw a ring, so it could never pin anything.
+
+### Recognisers cancel touches, and the window outlives the relay
+
+The cover's window is only torn down when the user comes back with nothing
+pending, so it survives many relays. Every pin and every return card used to
+add another gesture recogniser to the same view, and a `UIPanGestureRecognizer`
+among them **cancels the touches the view is using** as soon as it starts
+recognising. A thumb's natural drift was enough: the ring vanished and the
+target opened.
+
+Holding therefore degraded the more the feature was used, which is the shape of
+a leak rather than a bug in the hold. Two fixes, and either alone hides the
+other:
+
+- `clearCoverGestures()` when a relay begins.
+- `cancelsTouchesInView = false` on every recogniser added here.
+
+## One paint, two audiences
+
+The hardest problem in this file, and the one worth understanding before
+changing anything about rolling.
+
+The cover painted on the way out has to serve **two** later moments:
+
+1. **A return.** The user taps the `TSP` breadcrumb, and the card shows the line
+   they missed. iOS replays the exit's snapshot during the whole animation.
+2. **The next launch.** A warm relay keeps whatever is painted rather than
+   re-drawing, which is what stops the text swapping mid-transition.
+
+These want opposite things, and both naive answers are wrong:
+
+- **Roll on the way out** and the snapshot carries a line the card then
+  corrects. The user watches the phrase change under them on the way back.
+- **Do not roll** and the line never changes. Worse, and older: the pending
+  return that would gate the skip is only consumed by opening the app, and
+  somebody who only ever taps the widget never opens it.
+
+The question is neither. It is **"was the last card ever collected?"** A card
+still owed when a new relay starts means the user went back to the home screen
+and launched something else instead of tapping the breadcrumb: that line is one
+they chose not to read, and the next exit is free to roll.
+
+So an exit ending a relay someone may still return to keeps its line, and the
+exit after one they walked away from rolls. A line repeats at most once, and
+only to the person who ignored it.
+
+**A cold relay counts as uncollected.** `pendingReturn` is memory-only, so a
+process killed between relays takes the evidence with it. Without treating cold
+as proof, the exit always found a fresh pending return, always kept the line,
+and the next cold relay restored the very same one: the phrase froze for good.
+Cold is the *ordinary* case for a launcher, since iOS reclaims it while you are
+in the app it launched.
+
+### Rolling and counting are not the same act
+
+They used to be one call, which is why every arrangement above broke something:
+keeping a phrase for the card meant not counting it.
+
+- `roll` picks and paints. It runs on a backgrounding, and what it paints may be
+  replaced by a card or never foregrounded at all.
+- `countAsShown` scores, on the relay that actually puts the line in front of
+  somebody.
+
+This also retires an inaccuracy the code used to admit to: the app-switcher card
+and a plain icon launch raise the cover without anyone launching anything, and
+used to score for it.
+
+## SF Symbols in a UIImageView
+
+`UIImageView` honours `tintColor` **only for a template image**, and
+`UIImage(systemName:)` returns `.automatic`, which a plain image view renders in
+the symbol's own colour: black. A black padlock on a black cover is invisible,
+and the pin looked broken when the only thing missing was its colour.
+
+`UIButton` resolves this itself, which is why Copy and Share appeared and the
+padlock did not. Colour it into the image instead:
+
+```swift
+UIImage(systemName: "lock.fill", withConfiguration: config)?
+  .withTintColor(colour, renderingMode: .alwaysOriginal)
+```
+
+## The worst failure this code can have
+
+A launcher that never launches. It is worth naming because two separate bugs
+have reached it, and both looked harmless in isolation.
+
+A pinned cover the user walks away from used to leave the pin set: `endRelay`
+only drops `relayInFlight`, and `dismiss` refuses to run while a relay is in
+flight, so nothing unlocked. The next tap then armed behind a pin with no ring,
+no controls and no gestures left on screen. Neither the pin nor
+`clearCoverGestures` was wrong alone; together they closed the last door.
+
+`arm()` therefore clears the pin and the finger with it. `isHeld` is otherwise
+preserved across arming, because a press can legitimately land before the relay
+is armed, but a press still down when the cover was pinned belongs to that
+cover: nobody holds a phone through someone else's launch.
+
+## Testing the native half
+
+The app target has no XCTest bundle, and adding one means surgery on a committed
+`pbxproj`. So `scripts/test-relay-gate` compiles the real files against
+`scripts/relay-gate-tests.swift` and runs the cases:
+
+```bash
+./scripts/test-relay-gate
+```
+
+`npm test` does **not** run it. This works only while `RelayGate.swift` and
+`RelayReturn.swift` import nothing but Foundation; a single `import UIKit` in
+either deletes the native half's only executable test, silently.
+
+Two habits the suite depends on:
+
+- **Time is an argument**, never a wait. `durationElapsed(_:)` and
+  `consume(at:)` are called by hand.
+- **Prove each case bites.** Run it against the wrong implementation and watch
+  it go red. A guard written in two places once left every case green while
+  nothing enforced the rule, because each masked the other.

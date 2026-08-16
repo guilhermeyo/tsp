@@ -65,7 +65,7 @@ private enum Relay {
         // not special-cased here any more: `scheduleOpen` ticks synchronously
         // for it, so the instant path is as fast as it ever was and still
         // stops under a finger.
-        QuoteScreen.scheduleOpen(after: hold) {
+        QuoteScreen.scheduleOpen(after: hold, target: target) {
           open(target, window: window)
         }
       }
@@ -113,7 +113,7 @@ private enum Relay {
     // The URL is SUBSTITUTED into the sentence, not concatenated around it. The
     // Japanese line puts the whole explanation before the URL, which no amount
     // of prefix-plus-suffix can express.
-    let strings = QuoteScreen.relayStrings(language: QuoteScreen.configuredLanguage())
+    let strings = QuoteCatalog.relayStrings(language: QuoteCatalog.configuredLanguage())
     let alert = UIAlertController(
       title: strings["title"],
       message: strings["body"]?.replacingOccurrences(of: "%@", with: target.absoluteString),

@@ -91,8 +91,18 @@ rather than translated from English. You can add your own, and yours are never t
 switch languages.
 
 **Hold the screen and the phrase stays.** Press anywhere while it is up and the handoff waits; lift
-your thumb and you go. The rule lives in `ios/SimplePhone/RelayGate.swift` and is the one native
-thing here with its own test suite.
+your thumb and you go.
+
+**Keep holding and it pins.** A ring fills under your finger, and after 1.2 seconds the cover is
+yours: no countdown left, nothing leaves on its own. The ring shrinks away and a padlock at the top
+takes its place. From there, tap or drag sideways to carry on to the app you picked, or take the
+button at the bottom to stay here instead.
+
+The ring is also the only honest answer to whether the touch was seen at all. If none appears, the
+press landed in the dead window described below: lift, press again.
+
+The rule lives in `ios/SimplePhone/RelayGate.swift` and is the one native thing here with its own
+test suite.
 
 Holding is a race you can lose, and losing it is normal. iOS delivers no touch at all to the app for
 roughly the first 400 milliseconds of a widget tap: the phrase you are looking at in that stretch is
@@ -103,9 +113,14 @@ on reflex is still too early.
 
 **So the line waits for you.** Miss it, and the `TSP` breadcrumb iOS puts in the status bar brings
 back the phrase you did not finish, with how many times it has come up and a way into the app.
-Copy it, or share it as an image drawn without the count and without the button: just the line, who
-said it, and a small wordmark. The rule for when that card is offered lives in
-`ios/SimplePhone/RelayReturn.swift`, next to the gate and tested the same way.
+Drag sideways to carry on to the app you were headed for, and you can bounce between the two as long
+as you like. Copy the line, or share it as an image drawn without the count and without the button:
+just the phrase, who said it, and a small wordmark.
+
+Pinning the cover earns the same treatment. A line worth stopping for is a line worth coming back to.
+
+The rule for when that card is offered lives in `ios/SimplePhone/RelayReturn.swift`, next to the gate
+and tested the same way.
 
 ## Project layout
 

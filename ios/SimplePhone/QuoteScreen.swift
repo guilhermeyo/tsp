@@ -35,8 +35,6 @@ import UIKit
 /// file `src/domain/quotes.ts` imports, copied into the app bundle by the app
 /// target's Resources phase.
 enum QuoteScreen {
-  private static let appGroupId = "group.com.guilherme44.simple-phone"
-  private static let configKey = "launcher_config"
 
   /// A SECOND key in the same suite, and this file is its only writer.
   ///
@@ -52,7 +50,6 @@ enum QuoteScreen {
   /// which reads it for the Phrases screen. Two copies of a string with
   /// nothing enforcing agreement; a drift shows up as counters frozen at zero
   /// with no error anywhere.
-  private static let quoteStatsKey = "quote_stats"
 
   /// Holds the handoff while a finger is on the cover. See `RelayGate` for the
   /// rule and `scripts/test-relay-gate` for what it is required to do.
@@ -99,7 +96,6 @@ enum QuoteScreen {
   /// The only thing that tells a genuinely cold relay -- where the image iOS
   /// is replaying was painted by a process that no longer exists -- from a warm
   /// one whose cover merely happened to be dismissed. See `restoreOrRoll`.
-  private static var rolledThisLaunch = false
 
   /// Called once, at launch, so the background observer does not need to reach
   /// back into the app delegate.
@@ -148,12 +144,49 @@ enum QuoteScreen {
   static func beginRelay() {
     relayInFlight = true
     relayPhrase = nil
+    clearCoverGestures()
+    // A card still owed when a new relay starts was never collected: the user
+    // launched something else instead of tapping the breadcrumb, so that line
+    // is one they chose not to read.
+    if pendingReturn.isPending {
+      rollOwed = true
+      pendingReturn.clear()
+    }
+  }
+
+  /// Set when a return went uncollected, and honoured at the next exit.
+  ///
+  /// An exit ending a relay someone may still come back to keeps its line; the
+  /// exit after one they walked away from rolls. Why it cannot simply always
+  /// roll, or always keep: `docs/native-notes.md`, "One paint, two audiences".
+  private static var rollOwed = false
+
+  /// The line already on the cover, neither re-drawn nor re-counted.
+  ///
+  /// Falls back to the stored `current` because `relayPhrase` lives only as long
+  /// as the process, and repainting the cover blank would be worse than
+  /// repainting it the same.
+  private static func keptQuote(_ config: QuoteCatalog.Config) -> QuoteCatalog.Quote? {
+    guard let text = relayPhrase ?? QuoteCatalog.loadStats().current else { return nil }
+    return config.items.first { $0.text == text }
+  }
+
+  /// Strips the recognisers a pinned cover or a return card left behind.
+  ///
+  /// The window outlives any one relay, so these accumulate, and a pan among
+  /// them cancels the touches the view uses to detect a hold. Every recogniser
+  /// also sets `cancelsTouchesInView = false`; either half alone hides the
+  /// other. See `docs/native-notes.md`, "Touches on the cover".
+  private static func clearCoverGestures() {
+    guard let root = window?.rootViewController?.view else { return }
+    root.gestureRecognizers?.forEach(root.removeGestureRecognizer)
   }
 
   /// Called the instant the target is asked to open, which is the moment the
   /// phrase becomes something the user might not have finished reading.
-  private static func recordHandoff() {
-    pendingReturn.handedOff(phrase: relayPhrase, at: Date().timeIntervalSince1970)
+  private static func recordHandoff(target: URL) {
+    pendingReturn.handedOff(phrase: relayPhrase, target: target,
+                            at: Date().timeIntervalSince1970)
   }
 
   /// The app is being activated. Either the user is coming back from a relay
@@ -198,10 +231,19 @@ enum QuoteScreen {
   /// which is why every read and write of the counters lives on it.
   @discardableResult
   static func cover(in appWindow: UIWindow? = nil, forSnapshot: Bool = false) -> TimeInterval {
-    let config = loadConfig()
+    let config = QuoteCatalog.loadConfig()
 
     if forSnapshot {
-      let next = roll(config)
+      let next: QuoteCatalog.Quote?
+      if rollOwed || !pendingReturn.isPending {
+        next = QuoteCatalog.roll(config)
+        rollOwed = false
+      } else {
+        // Keeping what is already there: this exit ends a relay whose line the
+        // user can still come back for, so the snapshot has to carry that line
+        // and not its replacement.
+        next = keptQuote(config)
+      }
       if window == nil {
         show(config, phrase: next, in: appWindow ?? hostWindow, forSnapshot: true)
       } else {
@@ -210,9 +252,15 @@ enum QuoteScreen {
     } else if window == nil {
       // Reachable only on a COLD relay: a warm one always finds the cover the
       // last backgrounding left standing. See `restoreOrRoll`.
-      let drawn = restoreOrRoll(config)
+      // A cold relay proves any earlier return went uncollected: `pendingReturn`
+      // is memory-only, so a killed process took the evidence with it. Marked
+      // rather than rolled, because this relay still has to show the line the
+      // dead process painted into the snapshot.
+      rollOwed = true
+      let drawn = QuoteCatalog.restoreOrRoll(config)
       relayPhrase = drawn?.text
       show(config, phrase: drawn, in: appWindow ?? hostWindow, forSnapshot: false)
+      QuoteCatalog.countAsShown(relayPhrase, config: config)
     } else {
       // The cover being KEPT is the one the last backgrounding painted, and
       // `roll` recorded that line as `current` when it painted it. Reading it
@@ -220,7 +268,8 @@ enum QuoteScreen {
       // the phrase the user saw and showing the one before it: on a cold relay
       // the branch above draws a fresh line, and a capture taken before this
       // call would already be stale.
-      relayPhrase = loadStats().current
+      relayPhrase = QuoteCatalog.loadStats().current
+      QuoteCatalog.countAsShown(relayPhrase, config: config)
     }
     // Anything else: the cover already on screen is KEPT exactly as it is, and
     // this call reads nothing but the config it already needed.
@@ -242,6 +291,10 @@ enum QuoteScreen {
     // a finger that is no longer there must not fire into an app the user has
     // already come back from.
     gate.reset()
+    clearCoverGestures()
+    fingerLeft()
+    cardPhrase = nil
+    resumeTarget = nil
     frameLink?.invalidate()
     frameLink = nil
     framesLeft = 0
@@ -276,85 +329,289 @@ enum QuoteScreen {
   /// backgrounding, so it is what the system was already replaying while the
   /// app animated back in: the line simply stays instead of being torn down,
   /// and gains a count and a way out. Nothing flashes and nothing moves.
-  private static func presentCard(_ text: String) {
+  private static func presentCard(_ missed: RelayReturn.Missed) {
+    let text = missed.phrase
+    resumeTarget = missed.target
     guard let overlay = window, let root = overlay.rootViewController?.view else { return }
     // A touch on the card is not a touch on a relay. Without this the press
     // that dismisses it would leave the gate holding, and the NEXT relay would
     // inherit a finger that is not there.
     gate.reset()
+    // The pinned cover leaves a tap and a pan behind, and this adds its own.
+    // Without stripping first they stack on the same view, and the card's
+    // recogniser would be competing with a tap that means "carry on" for a
+    // cover that no longer exists.
+    clearCoverGestures()
 
-    let config = loadConfig()
+    let config = QuoteCatalog.loadConfig()
     let author = config.items.first { $0.text == text }?.author
-    let count = loadStats().counts[text] ?? 0
+    let count = QuoteCatalog.loadStats().counts[text] ?? 0
 
     root.subviews.forEach { $0.removeFromSuperview() }
-    let phrase = Quote(text: text, author: author)
+    let phrase = QuoteCatalog.Quote(text: text, author: author)
     cardPhrase = phrase
-    let stack = fill(root, config: config, phrase: phrase)
-    addCardChrome(to: root, below: stack, config: config, count: count)
+    let stack = CoverChrome.fill(root, config: config, phrase: phrase)
+    tallyLabel = CoverChrome.addCardChrome(
+      to: root, below: stack, config: config, count: count,
+      target: Proxy.shared, copy: #selector(Proxy.copyCard),
+      share: #selector(Proxy.shareCard), open: #selector(Proxy.dismissCard))
     shade?.removeFromSuperview()
     shade = nil
+
+    // Swiping right means the same thing it means on a pinned cover: take me
+    // where I was going. Here that is the app the user just came BACK from,
+    // which is why the destination had to be remembered alongside the line.
+    //
+    // Swipe only, and no tap. On a pinned cover a tap is someone mid-launch
+    // carrying on; on this card it would be someone who deliberately came back
+    // being thrown out again by a stray touch.
+    // A PAN and not a swipe. `UISwipeGestureRecognizer` wants a flick: a
+    // deliberate, unhurried drag to the right never reaches its velocity
+    // threshold and is silently ignored, which is exactly what a person doing
+    // what the feature describes would do.
+    let drag = UIPanGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.resume(_:)))
+    drag.cancelsTouchesInView = false
+    root.addGestureRecognizer(drag)
+
     root.layoutIfNeeded()
+  }
+
+  /// Far enough sideways, either way, to mean "take me there" rather than a
+  /// finger settling.
+  ///
+  /// Direction is deliberately not checked: asking for one only tests whether
+  /// the user guessed the same convention as the author. Read on `.ended`, so a
+  /// threshold crossed mid-drag cannot fire under a thumb still deciding.
+  private static func draggedSideways(_ recognizer: UIGestureRecognizer) -> Bool {
+    guard let pan = recognizer as? UIPanGestureRecognizer, pan.state == .ended else { return false }
+    let moved = pan.translation(in: pan.view)
+    return abs(moved.x) > 60 && abs(moved.x) > abs(moved.y)
+  }
+
+  /// Where the user was going when the phrase got away from them.
+  private static var resumeTarget: URL?
+
+  /// Back to the app they came from, from the card.
+  ///
+  /// A plain open rather than a fresh relay: the cover is already on screen, so
+  /// nothing is exposed, and re-entering the relay would roll a different line
+  /// under someone who came back to read this one. If the open fails the card
+  /// simply stays, which is a fair way to say nothing happened.
+  fileprivate static func resumeJourney(_ recognizer: UIGestureRecognizer) {
+    guard draggedSideways(recognizer), let target = resumeTarget else { return }
+    resumeTarget = nil
+    UIApplication.shared.open(target, options: [:]) { ok in
+      // RE-ARM, and this is the part that was missing. Resuming opens the
+      // target directly instead of going through the relay, so nothing
+      // recorded that a phrase was owed again: the second time the user came
+      // back, the cover found nothing pending and fell through to the list.
+      //
+      // If a line is worth coming back to once it is worth coming back to
+      // twice. Bouncing keeps working for as long as the user keeps bouncing,
+      // and the two minute window still ends it once they settle into the
+      // other app.
+      guard ok, let phrase = cardPhrase?.text else { return }
+      pendingReturn.handedOff(phrase: phrase, target: target,
+                              at: Date().timeIntervalSince1970)
+    }
+  }
+
+  // MARK: - Pinning the cover on purpose
+
+  /// How long a finger has to stay down before the cover is pinned.
+  ///
+  /// Long enough that nobody trips it while reaching for the screen, short
+  /// enough that it does not feel like a punishment. Being able to WATCH it
+  /// fill is what makes the number tolerable.
+  private static let lockDuration: TimeInterval = 1.2
+
+  private static var ring: CALayer?
+  private static var lockWork: DispatchWorkItem?
+
+  /// A finger arrived on the cover, at `point`.
+  ///
+  /// Also the honest signal that the touch was SEEN. iOS delivers nothing to
+  /// this app for the first ~420ms of a relay, so a press that draws no ring is
+  /// a press that never reached us: lift, press again, and the ring appears.
+  /// That is worth more than any hint text, because it is the truth rather than
+  /// a description of it.
+  /// A finger arrived on the cover: draw the ring and start the clock that pins
+  /// the cover when it closes.
+  ///
+  /// The ring is the only feedback a hold can have. iOS delivers nothing to
+  /// this app for the first ~420ms of a widget tap, so a press that draws no
+  /// ring is a press that never arrived: lift and press again. That is the fact
+  /// rather than a description of it.
+  ///
+  /// No glyph inside it. An earlier version drew a padlock at the centre and it
+  /// never rendered on a device, so the ring stands alone.
+  fileprivate static func fingerLanded(at point: CGPoint) {
+    guard relayInFlight, !gate.locked, ring == nil,
+          let root = window?.rootViewController?.view,
+          !(root.subviews.compactMap { $0 as? UIStackView }.isEmpty)
+    else { return }
+
+    let colour: UIColor = QuoteCatalog.loadConfig().isDark ? .white : .black
+    let radius: CGFloat = 32
+    let side = (radius + 6) * 2
+
+    // One container, so retiring it later is a single animation on a single
+    // layer rather than two that have to agree.
+    let dial = CALayer()
+    dial.frame = CGRect(x: point.x - side / 2, y: point.y - side / 2, width: side, height: side)
+    root.layer.addSublayer(dial)
+
+    let centre = CGPoint(x: side / 2, y: side / 2)
+    let circle = UIBezierPath(arcCenter: centre, radius: radius,
+                              startAngle: -.pi / 2, endAngle: 1.5 * .pi, clockwise: true).cgPath
+
+    let track = CAShapeLayer()
+    track.frame = dial.bounds
+    track.path = circle
+    track.fillColor = UIColor.clear.cgColor
+    track.strokeColor = colour.withAlphaComponent(0.15).cgColor
+    track.lineWidth = 3
+    dial.addSublayer(track)
+
+    let progress = CAShapeLayer()
+    progress.frame = dial.bounds
+    progress.path = circle
+    progress.fillColor = UIColor.clear.cgColor
+    progress.strokeColor = colour.withAlphaComponent(0.6).cgColor
+    progress.lineWidth = 3
+    progress.lineCap = .round
+    progress.strokeEnd = 0
+    dial.addSublayer(progress)
+
+    let sweep = CABasicAnimation(keyPath: "strokeEnd")
+    sweep.fromValue = 0
+    sweep.toValue = 1
+    sweep.duration = lockDuration
+    sweep.fillMode = .forwards
+    sweep.isRemovedOnCompletion = false
+    progress.add(sweep, forKey: "sweep")
+    ring = dial
+
+    // The animation is the picture; this is the fact. Kept separate so a
+    // dropped frame cannot decide whether the cover is pinned.
+    let work = DispatchWorkItem { engageLock() }
+    lockWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + lockDuration, execute: work)
+  }
+
+  /// The finger left before the ring closed.
+  private static func fingerLeft() {
+    lockWork?.cancel()
+    lockWork = nil
+    ring?.removeFromSuperlayer()
+    ring = nil
+  }
+
+  /// The finger held long enough. From here nothing leaves on its own.
+  private static func engageLock() {
+    guard relayInFlight, !gate.locked, let root = window?.rootViewController?.view else { return }
+    gate.lock()
+    // Copy and Share read this; on the return card it is set by `presentCard`.
+    if let text = relayPhrase {
+      cardPhrase = QuoteCatalog.Quote(text: text, author: QuoteCatalog.loadConfig().items.first { $0.text == text }?.author)
+    }
+    lockWork = nil
+
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+    let config = QuoteCatalog.loadConfig()
+    let count = relayPhrase.map { QuoteCatalog.loadStats().counts[$0] ?? 0 } ?? 0
+    let stack = root.subviews.compactMap { $0 as? UIStackView }.first
+    tallyLabel = CoverChrome.addCardChrome(
+      to: root, below: stack, config: config, count: count,
+      target: Proxy.shared, copy: #selector(Proxy.copyCard),
+      share: #selector(Proxy.shareCard), open: #selector(Proxy.dismissCard))
+    CoverChrome.addPadlock(to: root, config: config)
+
+    // The ring has said what it had to say: it shrinks away where it stood
+    // while the padlock fades in at the top.
+    if let ring {
+      let shrink = CABasicAnimation(keyPath: "transform.scale")
+      shrink.toValue = 0.4
+      let fade = CABasicAnimation(keyPath: "opacity")
+      fade.toValue = 0
+      let group = CAAnimationGroup()
+      group.animations = [shrink, fade]
+      group.duration = 0.28
+      group.fillMode = .forwards
+      group.isRemovedOnCompletion = false
+      ring.add(group, forKey: "retire")
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { ring.removeFromSuperlayer() }
+      self.ring = nil
+    }
+
+    let tap = UITapGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.proceedFromLock))
+    tap.cancelsTouchesInView = false
+    root.addGestureRecognizer(tap)
+    let drag = UIPanGestureRecognizer(target: Proxy.shared,
+                                      action: #selector(Proxy.proceedFromLock(_:)))
+    drag.cancelsTouchesInView = false
+    root.addGestureRecognizer(drag)
+  }
+
+
+  /// The user chose THIS app over the one the row pointed at.
+  ///
+  /// `dismiss` alone is not enough and that is not obvious: it refuses to do
+  /// anything while a relay is in flight, and a pinned cover is a relay still
+  /// in flight, because nothing was ever handed off. On the return card the
+  /// relay is long over and the plain dismiss works, which is exactly why this
+  /// path went unnoticed until a locked cover met the button.
+  ///
+  /// Ending the relay here is honest rather than a workaround: the target is
+  /// not going to open, so there is nothing left to guard.
+  fileprivate static func openHostApp() {
+    relayInFlight = false
+    pendingReturn.clear()
+    dismiss()
+  }
+
+  /// A tap on the pinned cover, or a drag to the right: go where the widget row
+  /// was pointing all along.
+  ///
+  /// A tap that lands on one of the controls is not this. `copy`, `share` and
+  /// the button all sit in front and would otherwise be unreachable, since the
+  /// recogniser is on the view behind them.
+  fileprivate static func proceedFromLock(_ recognizer: UIGestureRecognizer) {
+    guard gate.locked, let root = window?.rootViewController?.view else { return }
+    if recognizer is UITapGestureRecognizer {
+      if root.hitTest(recognizer.location(in: root), with: nil) is UIControl { return }
+    } else if !draggedSideways(recognizer) {
+      return
+    }
+    gate.proceed()
+    // The handoff `proceed` fires records the return like any other, and it is
+    // LEFT ALONE on purpose.
+    //
+    // This used to clear it, reasoning that a line read deliberately has
+    // nothing left to recover. That was backwards. Pinning the cover is the
+    // strongest signal a phrase matters to this person, so clearing it took the
+    // card away from precisely the user who cared most, and cost them the
+    // flash-free return as well: with nothing pending, the exit rolls a new
+    // line into the snapshot and they watch it change on the way back.
   }
 
   // MARK: - Taking the line with you
 
-  /// The line as a picture, without any of the card's furniture.
-  ///
-  /// What the card needs on screen and what belongs in something you post are
-  /// different things. A count of how many times a phrase has come up is a fact
-  /// about YOUR phone, and a button labelled "Open The Simple Phone" is a
-  /// control, not content. Both are dropped here, and what replaces them is a
-  /// small wordmark, so the image says where it came from without asking
-  /// anything of whoever sees it.
-  ///
-  /// Rendered from a view that was never on screen, through `layer.render`
-  /// rather than `drawHierarchy`, because the latter needs the view to be in a
-  /// window and this one deliberately is not.
-  private static func cardImage(config: Config, phrase: Quote) -> UIImage? {
-    let size = window?.bounds.size ?? UIScreen.main.bounds.size
-    guard size.width > 0, size.height > 0 else { return nil }
 
-    let canvas = UIView(frame: CGRect(origin: .zero, size: size))
-    fill(canvas, config: config, phrase: phrase)
-
-    let mark = UILabel()
-    mark.text = "The Simple Phone"
-    // Fainter than the attribution on the card, which is already secondary.
-    // A signature, not a caption.
-    mark.textColor = (config.isDark ? UIColor.white : .black).withAlphaComponent(0.3)
-    mark.font = font(for: config, size: 13)
-    mark.textAlignment = .center
-    mark.translatesAutoresizingMaskIntoConstraints = false
-    canvas.addSubview(mark)
-    NSLayoutConstraint.activate([
-      mark.centerXAnchor.constraint(equalTo: canvas.centerXAnchor),
-      mark.bottomAnchor.constraint(equalTo: canvas.bottomAnchor, constant: -56),
-    ])
-
-    canvas.setNeedsLayout()
-    canvas.layoutIfNeeded()
-
-    let renderer = UIGraphicsImageRenderer(bounds: canvas.bounds)
-    return renderer.image { context in canvas.layer.render(in: context.cgContext) }
-  }
-
-  /// The phrase as text, the way a person would write it down.
-  private static func cardText(_ phrase: Quote) -> String {
-    guard let author = phrase.author, !author.isEmpty else { return phrase.text }
-    return "\(phrase.text)\n\u{2014}\u{2009}\(author)"
-  }
 
   fileprivate static func copyCard() {
     guard let phrase = cardPhrase else { return }
-    UIPasteboard.general.string = cardText(phrase)
+    UIPasteboard.general.string = CoverChrome.cardText(phrase)
     flashConfirmation()
   }
 
   fileprivate static func shareCard() {
     guard let phrase = cardPhrase, let presenter = window?.rootViewController else { return }
-    var items: [Any] = [cardText(phrase)]
-    if let image = cardImage(config: loadConfig(), phrase: phrase) {
+    var items: [Any] = [CoverChrome.cardText(phrase)]
+    let size = window?.bounds.size ?? UIScreen.main.bounds.size
+    if let image = CoverChrome.cardImage(config: QuoteCatalog.loadConfig(), phrase: phrase,
+                                         size: size) {
       items.insert(image, at: 0)
     }
     let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
@@ -366,7 +623,7 @@ enum QuoteScreen {
   private static func flashConfirmation() {
     guard let label = tallyLabel else { return }
     let previous = label.text
-    label.text = relayStrings(language: loadConfig().language)["copied"] ?? "Copied"
+    label.text = QuoteCatalog.relayStrings(language: QuoteCatalog.loadConfig().language)["copied"] ?? "Copied"
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
       guard tallyLabel === label else { return }
       label.text = previous
@@ -375,76 +632,10 @@ enum QuoteScreen {
 
   /// The line the card is showing, so copy and share do not have to find it
   /// again, and the count label, so the copy confirmation has somewhere to go.
-  private static var cardPhrase: Quote?
+  private static var cardPhrase: QuoteCatalog.Quote?
   private static weak var tallyLabel: UILabel?
 
-  /// A glyph you can find but not trip over: dimmed to the same weight as the
-  /// attribution, with a touch target far larger than the icon it draws.
-  private static func chromeButton(symbol: String, label: String,
-                                   action: Selector, tint: UIColor) -> UIButton {
-    let button = UIButton(type: .system)
-    let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
-    button.setImage(UIImage(systemName: symbol, withConfiguration: config), for: .normal)
-    button.tintColor = tint.withAlphaComponent(0.45)
-    button.accessibilityLabel = label
-    button.addTarget(Proxy.shared, action: action, for: .touchUpInside)
-    button.translatesAutoresizingMaskIntoConstraints = false
-    button.widthAnchor.constraint(equalToConstant: 44).isActive = true
-    button.heightAnchor.constraint(equalToConstant: 44).isActive = true
-    return button
-  }
 
-  /// The count and the way back, under the line.
-  private static func addCardChrome(to container: UIView, below stack: UIStackView?,
-                                    config: Config, count: Int) {
-    let foreground: UIColor = config.isDark ? .white : .black
-    let strings = relayStrings(language: config.language)
-
-    let tally = UILabel()
-    tally.text = count == 1
-      ? (strings["shownOnce"] ?? "shown once")
-      : String(format: strings["shownTimes"] ?? "shown %@ times", "\(count)")
-    // Dimmer than the attribution, which is already secondary. This is a
-    // footnote about a phrase, not part of it.
-    tally.textColor = foreground.withAlphaComponent(0.35)
-    tally.font = font(for: config, size: 13)
-    tally.textAlignment = .center
-    tally.translatesAutoresizingMaskIntoConstraints = false
-    tallyLabel = tally
-
-    let back = UIButton(type: .system)
-    back.setTitle(strings["openApp"] ?? "Open The Simple Phone", for: .normal)
-    back.setTitleColor(foreground.withAlphaComponent(0.5), for: .normal)
-    back.titleLabel?.font = font(for: config, size: 15)
-    back.addTarget(Proxy.shared, action: #selector(Proxy.dismissCard), for: .touchUpInside)
-    back.translatesAutoresizingMaskIntoConstraints = false
-
-    let copy = chromeButton(symbol: "doc.on.doc", label: strings["copy"] ?? "Copy",
-                            action: #selector(Proxy.copyCard), tint: foreground)
-    let share = chromeButton(symbol: "square.and.arrow.up", label: strings["share"] ?? "Share",
-                             action: #selector(Proxy.shareCard), tint: foreground)
-
-    container.addSubview(tally)
-    container.addSubview(back)
-    container.addSubview(copy)
-    container.addSubview(share)
-    NSLayoutConstraint.activate([
-      share.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
-      share.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 8),
-      copy.trailingAnchor.constraint(equalTo: share.leadingAnchor, constant: -4),
-      copy.centerYAnchor.constraint(equalTo: share.centerYAnchor),
-    ])
-    NSLayoutConstraint.activate([
-      tally.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-      // Under the LINE, not under the middle of the screen. A four line phrase
-      // reaches well past centre, and anchoring to the centre printed the count
-      // straight through the attribution.
-      tally.topAnchor.constraint(equalTo: stack?.bottomAnchor ?? container.centerYAnchor,
-                                 constant: 28),
-      back.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-      back.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.bottomAnchor, constant: -28),
-    ])
-  }
 
   /// Where the failure alert should be presented from. The cover is normally
   /// gone by then (`dismissForFailure`), so this is the app's own root; the
@@ -456,7 +647,7 @@ enum QuoteScreen {
 
   // MARK: - Presentation
 
-  private static func show(_ config: Config, phrase: Quote?, in appWindow: UIWindow?, forSnapshot: Bool) {
+  private static func show(_ config: QuoteCatalog.Config, phrase: QuoteCatalog.Quote?, in appWindow: UIWindow?, forSnapshot: Bool) {
     if let appWindow {
       hostWindow = appWindow
     }
@@ -482,7 +673,7 @@ enum QuoteScreen {
     // window created with `forSnapshot: true` is the very one the user's finger
     // lands on in the common case. Only the `shade` copy below stays inert.
     controller.view = CoverView(frame: overlay.bounds)
-    fill(controller.view, config: config, phrase: phrase)
+    CoverChrome.fill(controller.view, config: config, phrase: phrase)
     overlay.backgroundColor = controller.view.backgroundColor
     overlay.rootViewController = controller
     overlay.makeKeyAndVisible()
@@ -490,7 +681,7 @@ enum QuoteScreen {
     if let host = appWindow ?? hostWindow, host !== overlay {
       let copy = UIView(frame: host.bounds)
       copy.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-      fill(copy, config: config, phrase: phrase)
+      CoverChrome.fill(copy, config: config, phrase: phrase)
       shade?.removeFromSuperview()
       host.addSubview(copy)
       shade = copy
@@ -528,18 +719,18 @@ enum QuoteScreen {
   /// next foreground came back to the new one -- which is precisely the
   /// mid-transition swap the keep-rule exists to prevent, reintroduced by the
   /// fix for it.
-  private static func refill(_ config: Config, phrase: Quote?) {
+  private static func refill(_ config: QuoteCatalog.Config, phrase: QuoteCatalog.Quote?) {
     guard let overlay = window else { return }
 
     if let root = overlay.rootViewController {
       root.view.subviews.forEach { $0.removeFromSuperview() }
-      fill(root.view, config: config, phrase: phrase)
+      CoverChrome.fill(root.view, config: config, phrase: phrase)
       overlay.backgroundColor = root.view.backgroundColor
       root.view.layoutIfNeeded()
     }
     if let shade = shade {
       shade.subviews.forEach { $0.removeFromSuperview() }
-      fill(shade, config: config, phrase: phrase)
+      CoverChrome.fill(shade, config: config, phrase: phrase)
       shade.layoutIfNeeded()
     }
     CATransaction.flush()
@@ -553,57 +744,6 @@ enum QuoteScreen {
   /// Paints `container` as the cover. No phrase means a plain themed field --
   /// deliberately, because that is still not the app list.
   @discardableResult
-  private static func fill(_ container: UIView, config: Config, phrase: Quote?) -> UIStackView? {
-    let background: UIColor = config.isDark ? .black : .white
-    container.backgroundColor = background
-    container.isOpaque = true
-    guard let phrase, !phrase.text.isEmpty else { return nil }
-
-    let foreground: UIColor = config.isDark ? .white : .black
-
-    let label = UILabel()
-    label.text = phrase.text
-    label.textColor = foreground
-    label.font = font(for: config)
-    label.numberOfLines = 0
-    label.textAlignment = .center
-    label.adjustsFontSizeToFitWidth = true
-    label.minimumScaleFactor = 0.6
-
-    // A STACK, not a second free-floating label, so the pair stays optically
-    // centred: with no author the line sits exactly where it always did, and
-    // with one the two centre together rather than the phrase shifting up by
-    // however tall the credit happens to be.
-    let stack = UIStackView(arrangedSubviews: [label])
-    stack.axis = .vertical
-    stack.alignment = .fill
-    stack.spacing = 10
-    stack.translatesAutoresizingMaskIntoConstraints = false
-
-    if let author = phrase.author, !author.isEmpty {
-      let credit = UILabel()
-      // An en dash and a thin space, which is how a printed attribution is set.
-      credit.text = "\u{2013}\u{2009}\(author)"
-      // Dimmed as well as smaller. At 55 percent it reads as secondary at a
-      // glance, which matters when the whole thing is on screen for under a
-      // second and the phrase is what should be read first.
-      credit.textColor = foreground.withAlphaComponent(0.55)
-      credit.font = font(for: config, size: 15)
-      credit.numberOfLines = 1
-      credit.textAlignment = .center
-      credit.adjustsFontSizeToFitWidth = true
-      credit.minimumScaleFactor = 0.6
-      stack.addArrangedSubview(credit)
-    }
-
-    container.addSubview(stack)
-    NSLayoutConstraint.activate([
-      stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-      stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 32),
-      stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -32),
-    ])
-    return stack
-  }
 
   /// `connectedScenes` is an unordered Set, so the old
   /// `connectedScenes.first as? UIWindowScene` cast an ARBITRARY element and
@@ -684,9 +824,10 @@ enum QuoteScreen {
   /// runloop turns, so ticking synchronously guarantees no finger is ever seen.
   /// It still costs nothing when nobody is touching, which is the rule about an
   /// off switch never charging for itself.
-  static func scheduleOpen(after seconds: TimeInterval, _ open: @escaping () -> Void) {
+  static func scheduleOpen(after seconds: TimeInterval, target: URL,
+                           _ open: @escaping () -> Void) {
     let token = gate.arm {
-      recordHandoff()
+      recordHandoff(target: target)
       open()
     }
     guard seconds > 0 else {
@@ -710,20 +851,12 @@ enum QuoteScreen {
   /// is what it always claimed to be and what the header of this file says the
   /// frame wait exists to guarantee.
   /// How long after the app becomes active before a touch is actually
-  /// delivered to it.
+  /// delivered to it. Measured, not guessed: `docs/native-notes.md`, "The dead
+  /// 420 milliseconds".
   ///
-  /// MEASURED, not guessed. A trace of eleven real widget taps on an iPhone 17
-  /// Pro: the relay starts at 0, `didBecomeActive` lands at 0.21 to 0.23, and
-  /// the earliest touch the app ever saw was 0.42. Never once earlier, and not
-  /// on the host window either, which listens precisely to catch that case.
-  /// For that first stretch the finger belongs to the home screen and iOS does
-  /// not hand it over.
-  ///
-  /// Without this the duration was being spent on a picture: the phrase is
-  /// visible from 0 because the system is replaying the snapshot, so a "1.5
-  /// second" cover offered 1.36 seconds you could touch and 0.4 you could only
-  /// look at. Adding it back is what makes the number in the Phrases screen
-  /// mean what it says.
+  /// Without it the chosen duration is partly spent on a picture the user
+  /// cannot touch, and the number in the Phrases screen stops meaning what it
+  /// says.
   private static let touchSettleDelay: TimeInterval = 0.25
 
   private static func countDown(_ seconds: TimeInterval, token: Int) {
@@ -786,13 +919,19 @@ enum QuoteScreen {
       // Only while a handoff is actually pending. Once the relay is over this
       // same window carries the return card, and a tap on its Share button is
       // not a statement about any launch.
-      guard QuoteScreen.relayInFlight else { return }
+      guard QuoteScreen.relayInFlight, !QuoteScreen.gate.locked else { return }
       guard let touches = event.allTouches, !touches.isEmpty else { return }
       // Down if ANY touch is still on the glass. The gate collapses repeats,
       // so calling this on every event is free.
       let down = touches.contains { $0.phase != .ended && $0.phase != .cancelled }
       if down {
         QuoteScreen.gate.press()
+        // Also here, because this is the ONLY place a finger that landed during
+        // the app-switch animation is seen: it produces no `touchesBegan` on
+        // the view, having begun while the home screen still owned it.
+        if let point = touches.first?.location(in: rootViewController?.view) {
+          QuoteScreen.fingerLanded(at: point)
+        }
       } else {
         QuoteScreen.gate.release()
       }
@@ -814,6 +953,7 @@ enum QuoteScreen {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesBegan(touches, with: event)
       QuoteScreen.gate.press()
+      if let point = touches.first?.location(in: self) { QuoteScreen.fingerLanded(at: point) }
     }
 
     /// A finger that was ALREADY DOWN when the cover became touchable.
@@ -832,16 +972,21 @@ enum QuoteScreen {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesMoved(touches, with: event)
       QuoteScreen.gate.press()
+      // The finger that landed during the animation has no `began` here.
+      // `fingerLanded` ignores repeats.
+      if let point = touches.first?.location(in: self) { QuoteScreen.fingerLanded(at: point) }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesEnded(touches, with: event)
       QuoteScreen.gate.release()
+      QuoteScreen.fingerLeft()
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesCancelled(touches, with: event)
       QuoteScreen.gate.cancelPress()
+      QuoteScreen.fingerLeft()
     }
   }
 
@@ -868,13 +1013,21 @@ enum QuoteScreen {
 
     @objc func tick() { QuoteScreen.tick() }
 
+    @objc func proceedFromLock(_ recognizer: UIGestureRecognizer) {
+      QuoteScreen.proceedFromLock(recognizer)
+    }
+
+    @objc func resume(_ recognizer: UIGestureRecognizer) {
+      QuoteScreen.resumeJourney(recognizer)
+    }
+
     @objc func copyCard() { QuoteScreen.copyCard() }
     @objc func shareCard() { QuoteScreen.shareCard() }
 
     /// The way out of the card, and the only one that matters: after this the
     /// cover is gone and the user is in the app they asked for.
     @objc func dismissCard() {
-      QuoteScreen.dismiss()
+      QuoteScreen.openHostApp()
     }
 
     @objc func hostTouch(_ recognizer: UILongPressGestureRecognizer) {
@@ -900,371 +1053,6 @@ enum QuoteScreen {
     }
   }
 
-  // MARK: - Content
+  // MARK: - Type
 
-  /// Draws the line for the NEXT cover, counts it, and remembers it.
-  ///
-  /// The one place a phrase is ever chosen. Counting AT THE DRAW rather than
-  /// when the line is retired is what keeps the number honest: a line is put
-  /// up exactly once per draw, so one draw is one increment, with no second
-  /// write anywhere and nothing to reconcile if the process is killed while
-  /// backgrounded.
-  ///
-  /// The number therefore means "times this line was put up as a cover", which
-  /// includes the app-switcher card and a plain icon launch. That is not a
-  /// rounding error, it is the same accepted side effect the header of this
-  /// file already documents: iOS gives no way to know at snapshot time which
-  /// path the next foreground will take.
-  private static func roll(_ config: Config) -> Quote? {
-    rolledThisLaunch = true
-    guard config.enabled else { return nil }
-
-    var stats = loadStats()
-    guard let next = pick(from: config.items, counts: stats.counts, excluding: stats.current) else {
-      return nil
-    }
-    stats.counts[next.text, default: 0] += 1
-    stats.current = next.text
-    saveStats(stats, items: config.items)
-    return next
-  }
-
-  /// The cold relay, and the one case where NOT rolling is the right answer.
-  ///
-  /// The process was killed while backgrounded, so the image iOS is replaying
-  /// over this launch was painted by a process that is gone. Restoring the line
-  /// that snapshot carries is what keeps the first live frame equal to it;
-  /// rolling a new one would swap the text under an image already on screen, on
-  /// the path where the swap is most visible. This is a hole in the
-  /// snapshot-matching guarantee that predates the counters and that the stored
-  /// `current` closes for free.
-  ///
-  /// `rolledThisLaunch` is what makes it safe. Once this process has drawn a
-  /// line of its own, the stored one is merely the line it just took down, and
-  /// putting it back up would be the repeat this whole change is about.
-  ///
-  /// Costs one extra key read on a path that is already booting all of React
-  /// Native, and no write at all unless there is nothing stored yet -- which is
-  /// once per install.
-  private static func restoreOrRoll(_ config: Config) -> Quote? {
-    guard config.enabled else { return nil }
-    // Matched on TEXT, so re-attributing a line does not lose the snapshot it
-    // is already carrying; the restored Quote is the CURRENT one, so an author
-    // edited since the snapshot was taken shows up on the first live frame.
-    if !rolledThisLaunch,
-       let current = loadStats().current,
-       let restored = config.items.first(where: { $0.text == current }) {
-      rolledThisLaunch = true
-      return restored
-    }
-    return roll(config)
-  }
-
-  /// Uniform over the least-shown tier, never the line just taken down.
-  ///
-  /// A bag shuffle whose bag is RECOMPUTED from the counts instead of stored,
-  /// so the number the user reads in the Phrases screen IS the algorithm's
-  /// entire state. Nothing to invalidate when a phrase is added, deleted or the
-  /// language flips: an item with no entry reads as zero and lands in the
-  /// bottom tier, which is exactly where a new line belongs.
-  ///
-  /// Excluding `current` is the only part of this anyone will ever perceive.
-  /// A back-to-back repeat was already just 1 in 101 with `randomElement`; this
-  /// makes it impossible, which matters because it is the ONE repeat a person
-  /// actually notices. The rest is a real but unobservable improvement to the
-  /// long tail, and it should be described that way -- the phrase that never
-  /// changed was the stuck window, not the draw.
-  ///
-  /// THE FLOOR is the part that is not obvious. Strict least-shown-first would
-  /// take a freshly added line (count 0, alone at the bottom of the ranking)
-  /// and show it on every single backgrounding until it caught up with the rest
-  /// -- forty in a row on a list that has been in use a month, manufacturing
-  /// precisely the repetitiveness this exists to remove. Widening the tier to
-  /// at least `max(5, count / 8)` candidates (12 at the bundled 101) keeps a
-  /// new line arriving within a handful of relays, takes it out of the running
-  /// for two in a row, and still draws from the strict minimum for most of a
-  /// cycle, because the tier only widens once the minimum tier runs thin.
-  private static func pick(from items: [Quote], counts: [String: Int], excluding current: String?) -> Quote? {
-    guard items.count > 1 else { return items.first }
-
-    // The fallback covers a config that somehow holds nothing but duplicates of
-    // the current line; the contract is the cover, so this may not return nil
-    // for a list that has items in it.
-    let pool = items.filter { $0.text != current }
-    let candidates = pool.isEmpty ? items : pool
-
-    // Sorting 101 strings, on the backgrounding path, with no frame deadline
-    // and nobody watching. The deterministic tie-break keeps the ranking stable
-    // between draws; the randomness comes from the pick within the tier.
-    let ranked = candidates.sorted { lhs, rhs in
-      let left = counts[lhs.text] ?? 0
-      let right = counts[rhs.text] ?? 0
-      return left == right ? lhs.text < rhs.text : left < right
-    }
-    guard let first = ranked.first else { return nil }
-
-    let lowest = counts[first.text] ?? 0
-    let floor = min(ranked.count, max(5, items.count / 8))
-    var tier = ranked.prefix { (counts[$0.text] ?? 0) == lowest }
-    if tier.count < floor {
-      tier = ranked.prefix(floor)
-    }
-    return tier.randomElement()
-  }
-
-  /// How many times each line has been put up, and which one the last snapshot
-  /// carries.
-  ///
-  /// Keyed by the phrase TEXT, not by index: `removeQuoteAt` splices, so every
-  /// count past a deleted row would silently slide onto the wrong line.
-  /// `addQuote` already refuses an exact duplicate, so the text is a unique,
-  /// stable key with no id scheme and no migration for the 202 bundled lines.
-  /// The consequence worth knowing: a future edit-a-phrase UI would zero that
-  /// line's history, and the Phrases screen DOES edit: `updateQuote` renames a
-  /// line in place, which orphans its count and the `current` restore key. The
-  /// orphan is pruned on the next write and the restore falls through to a
-  /// fresh roll, so the cost is one forgotten counter, not a broken screen.
-  private struct Stats {
-    var counts: [String: Int] = [:]
-    var current: String?
-  }
-
-  /// Resilient in the same way `loadConfig` is, and for the same reason: a
-  /// corrupt payload here must degrade to "no history", never to a throw on the
-  /// path that puts the cover up.
-  private static func loadStats() -> Stats {
-    let defaults = UserDefaults(suiteName: appGroupId) ?? .standard
-    let data = defaults.data(forKey: quoteStatsKey)
-      ?? defaults.string(forKey: quoteStatsKey)?.data(using: .utf8)
-    let root = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-
-    // Element-wise rather than a blanket `as? [String: Int]`, so one junk value
-    // costs that entry and not the whole table.
-    var counts: [String: Int] = [:]
-    for (key, value) in (root?["counts"] as? [String: Any]) ?? [:] {
-      guard let number = value as? NSNumber else { continue }
-      counts[key] = number.intValue
-    }
-    return Stats(counts: counts, current: root?["current"] as? String)
-  }
-
-  private static func saveStats(_ stats: Stats, items: [Quote]) {
-    var counts = stats.counts
-    // Keys for lines no longer in rotation are KEPT on purpose. It is what
-    // makes a language round trip non-destructive (the four catalogs are
-    // disjoint, so pruning would zero the others permanently), and a count is
-    // only ever looked up for an item that is in the list right now, so a stale
-    // key cannot reach the draw. The bound exists only so that pasting in a very
-    // large list cannot grow a blob that is rewritten on every backgrounding.
-    //
-    // It has to clear the sum of every bundled catalog for the guarantee above
-    // to hold: four languages at 101 lines each is 404 keys that all have to fit
-    // alongside whatever the user wrote themselves.
-    if counts.count > 1200 {
-      let live = Set(items.map(\.text))
-      counts = counts.filter { live.contains($0.key) }
-    }
-
-    var payload: [String: Any] = ["counts": counts]
-    if let current = stats.current {
-      payload["current"] = current
-    }
-    guard let data = try? JSONSerialization.data(withJSONObject: payload),
-          let json = String(data: data, encoding: .utf8)
-    else { return }
-
-    // Written as a String so the module reads it back with a plain
-    // `string(forKey:)`, matching how the app writes `launcher_config`.
-    // `loadStats` accepts both forms anyway.
-    (UserDefaults(suiteName: appGroupId) ?? .standard).set(json, forKey: quoteStatsKey)
-  }
-
-  /// Mirrors the widget's `Theme.widgetFont`: same family choice, one size
-  /// down, because this is a full screen holding one line rather than a widget
-  /// holding six.
-  private static func font(for config: Config, size: CGFloat = 30) -> UIFont {
-    let base = UIFont.systemFont(ofSize: size, weight: .semibold)
-    let design: UIFontDescriptor.SystemDesign
-    switch config.font {
-    case "monospaced": design = .monospaced
-    case "rounded": design = .rounded
-    case "serif": design = .serif
-    default: return base
-    }
-    guard let descriptor = base.fontDescriptor.withDesign(design) else { return base }
-    return UIFont(descriptor: descriptor, size: size)
-  }
-
-  /// One line and, optionally, who said it.
-  ///
-  /// Decoded from BOTH wire shapes: a bare string when there is no author, an
-  /// object when there is. `text` alone is the identity everywhere else --
-  /// stats keys, the "not the one just shown" exclusion, the restore lookup --
-  /// so attribution can be edited without orphaning a counter.
-  struct Quote: Equatable {
-    let text: String
-    let author: String?
-  }
-
-  struct Config {
-    let enabled: Bool
-    let items: [Quote]
-    let isDark: Bool
-    let font: String
-    /// The interface language the user settled on, as a stored BCP-47 tag, or
-    /// nil when nothing has ever been written. Carried here so the relay's
-    /// failure alert can be worded in it -- it is the only string this process
-    /// writes that the user reads.
-    let language: String?
-    /// Resolved by the app from its named durations, so this side never carries
-    /// the label table. Clamped on read: a corrupt payload must not be able to
-    /// freeze the launcher on a phrase.
-    let holdSeconds: TimeInterval
-  }
-
-  /// The stored language, for the one caller outside this file: AppDelegate's
-  /// failure alert. Re-reads the config rather than caching it, which is free on
-  /// a path that has already given up on opening anything.
-  static func configuredLanguage() -> String? {
-    loadConfig().language
-  }
-
-  /// Hand-rolled rather than Codable structs: this needs five fields out of a
-  /// payload that belongs to the JS side, and a synthesized decoder would fail
-  /// the whole parse over any key it did not expect.
-  ///
-  /// NEVER FAILS, by design. Every field defaults independently, exactly as
-  /// `decodeTheme` does on the TypeScript side and for the same reason. The old
-  /// version returned nil for the whole config if any one of five things was
-  /// missing, and the caller turned that nil into "open with nothing on
-  /// screen".
-  private static func loadConfig() -> Config {
-    // `?? .standard` matches ConfigStore.swift and LauncherNativeModule.swift.
-    // On a build whose App Group entitlement did not sign, the app writes to
-    // .standard, and reading the same place is better than reading nothing.
-    let defaults = UserDefaults(suiteName: appGroupId) ?? .standard
-    let data = defaults.data(forKey: configKey)
-      ?? defaults.string(forKey: configKey)?.data(using: .utf8)
-    let root = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-    let quotes = root?["quotes"] as? [String: Any]
-    let theme = root?["theme"] as? [String: Any]
-
-    // Top-level `language` is authoritative. `quotes.language` is read only as
-    // a fallback, for a config written by a build that still mirrored it there.
-    let language = (root?["language"] as? String) ?? (quotes?["language"] as? String)
-    let stored = ((quotes?["items"] as? [Any]) ?? []).compactMap(Self.decodeQuote)
-
-    return Config(
-      enabled: quotes?["enabled"] as? Bool ?? true,
-      // An empty or absent list is "never seeded", not "the user deleted every
-      // line". Deleting the last phrase is what the `enabled` switch is for.
-      items: stored.isEmpty ? bundledItems(language: language) : stored,
-      isDark: theme?["isDark"] as? Bool ?? true,
-      font: theme?["font"] as? String ?? "monospaced",
-      language: language,
-      // Absent means 0, not some invented default: `instant` is the app's own
-      // first-run duration, and inventing a wait here would be exactly the
-      // artificial delay this feature is not allowed to add.
-      holdSeconds: min(max((quotes?["durationMs"] as? Double ?? 0) / 1000, 0), 8))
-  }
-
-  /// The full catalog, read from the same `quotes.json` the TypeScript side
-  /// imports. Used only when the shared config has nothing usable -- a fresh
-  /// install, a config written before quotes existed, an unsigned App Group.
-  /// Without it, the cover on those paths would be a blank coloured screen.
-  private static let bundledCatalog: [String: Any] = {
-    guard let url = Bundle.main.url(forResource: "quotes", withExtension: "json"),
-          let data = try? Data(contentsOf: url),
-          let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else { return [:] }
-    return root
-  }()
-
-  /// A bare string is an unattributed line; an object carries `text` and an
-  /// optional `author`. An author that trims to nothing becomes nil, so the
-  /// renderer never has to distinguish absent from empty.
-  private static func decodeQuote(_ raw: Any) -> Quote? {
-    if let text = raw as? String {
-      let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-      return trimmed.isEmpty ? nil : Quote(text: trimmed, author: nil)
-    }
-    guard let object = raw as? [String: Any],
-          let text = object["text"] as? String
-    else { return nil }
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.isEmpty { return nil }
-    let author = (object["author"] as? String)?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    return Quote(text: trimmed, author: (author?.isEmpty ?? true) ? nil : author)
-  }
-
-  private static func bundledItems(language: String?) -> [Quote] {
-    if let language, let items = catalogPhrases(matching: language) {
-      return items
-    }
-
-    // THE SYSTEM STEP, and it is not a second resolver competing with the app's.
-    // It is reachable ONLY while the shared container holds no phrase list at
-    // all -- a fresh install whose first ever action was a widget tap, before
-    // JavaScript has run once. The moment the app writes a config, the stored
-    // `language` above wins unconditionally and this line is dead. Without it a
-    // brand-new install would show its very first cover in whatever
-    // `defaultLanguage` happens to say, regardless of the phone.
-    if let system = Locale.preferredLanguages.first, let items = catalogPhrases(matching: system) {
-      return items
-    }
-
-    // The default language lives in the catalog rather than being re-decided
-    // here, so Swift cannot drift from the TypeScript side.
-    let fallback = bundledCatalog["defaultLanguage"] as? String ?? "en"
-    return ((bundledCatalog[fallback] as? [Any]) ?? []).compactMap(decodeQuote)
-  }
-
-  /// A BCP-47 tag to one of the catalog's phrase arrays: exact key first, then
-  /// the two-letter primary subtag, mirroring `matchLanguage` on the TypeScript
-  /// side. Underscores are normalised because `Locale` spells regions with one
-  /// ("pt_BR") while the catalog keys use hyphens.
-  ///
-  /// The `as? [Any]` cast is also the guard against the catalog's non-phrase
-  /// keys: `relay` is a dictionary and `defaultLanguage` is a string, so neither
-  /// can ever be returned as a phrase list even when a tag prefix-matches their
-  /// name. Keys are sorted so a tie between two candidates is at least stable.
-  private static func catalogPhrases(matching tag: String) -> [Quote]? {
-    let normalized = tag.replacingOccurrences(of: "_", with: "-").lowercased()
-    guard !normalized.isEmpty else { return nil }
-    let prefix = String(normalized.prefix(2))
-    let keys = bundledCatalog.keys.sorted()
-    let key = keys.first { $0.lowercased() == normalized }
-      ?? keys.first { $0.lowercased().hasPrefix(prefix) }
-    guard let key, let raw = bundledCatalog[key] as? [Any] else { return nil }
-    let items = raw.compactMap(decodeQuote)
-    return items.isEmpty ? nil : items
-  }
-
-  /// The relay's failure alert, in the user's language, from the same
-  /// `quotes.json` the app imports. `AppDelegate` is the only caller.
-  ///
-  /// This is technically a SECOND matcher, and it is safe only because it
-  /// matches the STORED tag and never the system locale: `config.language` is
-  /// always one of the four exact keys in the relay table, so it cannot disagree
-  /// with the JavaScript resolver about which language the user is in. If a
-  /// future build ever stores a tag the table lacks, the worst case is English.
-  ///
-  /// The English table is the base and the matched one is merged over it, so a
-  /// half-finished translation renders its finished keys and English for the
-  /// rest rather than nothing at all.
-  static func relayStrings(language: String?) -> [String: String] {
-    let table = bundledCatalog["relay"] as? [String: Any] ?? [:]
-    let english = table["en"] as? [String: String] ?? [:]
-    guard let language else { return english }
-
-    let normalized = language.replacingOccurrences(of: "_", with: "-").lowercased()
-    guard !normalized.isEmpty else { return english }
-    let prefix = String(normalized.prefix(2))
-    let keys = table.keys.sorted()
-    let key = keys.first { $0.lowercased() == normalized }
-      ?? keys.first { $0.lowercased().hasPrefix(prefix) }
-    guard let key, let localized = table[key] as? [String: String] else { return english }
-    return english.merging(localized) { _, new in new }
-  }
 }
