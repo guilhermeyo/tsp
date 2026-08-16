@@ -208,6 +208,13 @@ enum QuoteScreen {
   private static func clearCoverGestures() {
     guard let root = window?.rootViewController?.view else { return }
     root.gestureRecognizers?.forEach(root.removeGestureRecognizer)
+    // AND THE CONTROLS THEY BELONGED TO. A pinned cover walked away from is
+    // left standing on purpose -- `cover(forSnapshot:)` steps aside for it --
+    // and a warm relay reuses whatever cover it finds. Without this, the next
+    // launch inherited that pin's Copy, Share and "Open The Simple Phone", and
+    // the last of those silently cancels the relay the user just asked for.
+    CoverChrome.removeCardChrome(from: root)
+    tallyLabel = nil
   }
 
   /// Called the instant the target is asked to open, which is the moment the
@@ -248,12 +255,31 @@ enum QuoteScreen {
     let token = gate.arm(work)
 
     guard !resumed.pinned else {
-      // The tap and the drag `engageLock` left on the view are still attached,
-      // and `proceedFromLock` reads the gate rather than any state of its own,
-      // so locking again is the entire restoration.
+      // The drag `engageLock` left on the view is still attached, along with
+      // the controls, because `cover(forSnapshot:)` left this cover alone. So
+      // locking again is the entire restoration.
       gate.lock()
       return
     }
+    guard !resumed.held else {
+      // A cover that was merely HELD has none of that. `engageLock` locks the
+      // gate AND builds the controls and the way out, which is exactly what is
+      // missing, so it is the whole answer rather than half of one.
+      //
+      // Locking without it produced a full-screen phrase with no countdown, no
+      // controls and no working gesture, which survived being relaunched: every
+      // touch route is gated on `!gate.locked`, `dismiss` refuses to run for
+      // the length of a relay, and a pinned cover is a relay still in flight.
+      engageLock()
+      return
+    }
+
+    // Known before the settle, because a finger can land inside it and
+    // `remainingCountdown` would otherwise read the deadline from BEFORE the
+    // interruption -- long past by then, so worth zero, so lifting hands off at
+    // once. `startCountdown` replaces both with the exact values.
+    countdownTotal = resumed.total
+    countdownDeadline = CACurrentMediaTime() + touchSettleDelay + resumed.secondsLeft
 
     // The same settle as a fresh relay. Unlocking has its own stretch where the
     // app is drawing but not yet being handed touches, so a countdown started
@@ -280,7 +306,7 @@ enum QuoteScreen {
     // A finger still down counts as a pin: holding means "I am still reading",
     // and nobody keeps a finger on the glass through a locked screen.
     if relayInFlight, !pendingReturn.isPending, armedWork != nil {
-      suspension.interrupted(pinned: gate.locked || isHolding,
+      suspension.interrupted(pinned: gate.locked, held: isHolding,
                              secondsLeft: remainingCountdown(),
                              total: countdownTotal,
                              at: Date().timeIntervalSince1970)
@@ -638,11 +664,15 @@ enum QuoteScreen {
   /// gesture. Lifting a finger that was not driving the hold is not this finger
   /// lifting: with two down, letting go of the passenger used to wipe the origin
   /// and unwind the ring under a thumb that had not moved.
-  private static func fingerLeft(_ touch: UITouch? = nil) {
+  private static func fingerLeft(_ touch: UITouch? = nil, cancelled: Bool = false) {
     if let touch, let holdTouch, touch !== holdTouch { return }
     let wasHolding = isHolding
-    // What the finger had promised, if anything. An open ring promises nothing.
-    let promised = drag.promise
+    // What the finger had promised, if anything. An open ring promises nothing,
+    // and NEITHER DOES A TOUCH THE SYSTEM TOOK AWAY. A call arriving, or a
+    // system gesture claiming the touch, is not the user deciding: acting on
+    // the armed gesture there pinned the cover, or launched the app, on an
+    // interruption they had no part in.
+    let promised = cancelled ? CoverDrag.Gesture.none : drag.promise
     forgetHold()
     // A pin outlives the finger that made it. Without this, lifting off a cover
     // that has just been pinned would wind the badge back to counting.
@@ -1254,11 +1284,11 @@ enum QuoteScreen {
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesCancelled(touches, with: event)
       guard !stillDown(besides: touches, in: event) else {
-        touches.forEach { QuoteScreen.fingerLeft($0) }
+        touches.forEach { QuoteScreen.fingerLeft($0, cancelled: true) }
         return
       }
       QuoteScreen.gate.cancelPress()
-      touches.forEach { QuoteScreen.fingerLeft($0) }
+      touches.forEach { QuoteScreen.fingerLeft($0, cancelled: true) }
     }
   }
 
@@ -1321,9 +1351,13 @@ enum QuoteScreen {
         let point = recognizer.location(in: recognizer.view)
         QuoteScreen.fingerLanded(nil, at: point)
         QuoteScreen.fingerMoved(nil, to: point)
-      case .ended, .cancelled, .failed:
+      case .ended:
         QuoteScreen.gate.release()
         QuoteScreen.fingerLeft()
+      case .cancelled, .failed:
+        // Taken away rather than lifted, so it decides nothing.
+        QuoteScreen.gate.release()
+        QuoteScreen.fingerLeft(cancelled: true)
       default:
         break
       }

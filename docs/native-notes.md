@@ -542,6 +542,21 @@ for as long as you like, and commits to nothing. Dragging closes the pin ring in
 proportion to how far the finger has travelled; coming back toward where it
 started opens it again; whole means pinned.
 
+**Held and pinned are not the same suspension.** A cover that was pinned already
+carries the pin's controls and the drag that leaves it, and comes back needing
+only its gate locked again. One that was merely HELD carries none of that, and
+locking it produced a full-screen phrase with no countdown, no controls and no
+working gesture, surviving a relaunch — the worst failure this code can have,
+reintroduced through the newest path into it. A held cover therefore comes back
+through the same code that builds a pin from scratch.
+
+The pin's controls are tagged so they can be taken off as a group, and
+`clearCoverGestures` does exactly that. A pinned cover walked away from is left
+standing on purpose, and the next warm relay reuses whatever cover it finds:
+without stripping them the launch inherited that pin's Copy, Share and "Open The
+Simple Phone", and the last of those silently cancels the relay the user just
+asked for.
+
 It was a 1.2 second hold first, and the reason it changed is the dead window
 above. A timed hold asks the user to commit before they know whether they were
 heard: a press that never arrived cost them the entire wait before anything told
@@ -558,10 +573,6 @@ stretch of the touch belonged to the home screen. Seen is the honest baseline
 and it is the one the user's eye agrees with, because the ring starts moving
 from that same instant.
 
-Only the vertical component counts. Sideways already means something on a cover
-that is pinned, and asking one axis to answer two questions is how a thumb's
-natural arc ends up deciding for the user.
-
 ### The whole of the gesture
 
 A finger down on the cover can end in exactly four ways, and only one of them
@@ -574,7 +585,12 @@ needs anything more than lifting.
 | Drags **down** past 120pt | pause | closed, one buzz | the cover is pinned |
 | Drags **sideways** under 60pt | forward | part closed | the countdown resumes where it stopped |
 | Drags **sideways** past 60pt | forward | closed, one buzz | goes to the app |
-| Is cancelled by the system | — | — | same as resting: the countdown resumes |
+| Is cancelled by the system | — | — | the countdown resumes, WHATEVER the ring said |
+
+That last row is a decision, not a fallthrough. A call arriving or a system
+gesture claiming the touch is not the user deciding, so a closed ring is thrown
+away rather than honoured: acting on it pinned the cover, or launched the app,
+on an interruption they had no part in.
 
 **Nothing acts while the finger is down.** Closing a ring is a promise about
 what lifting will do and nothing more, which is what makes both gestures

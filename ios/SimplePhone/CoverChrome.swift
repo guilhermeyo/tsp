@@ -12,6 +12,16 @@ import UIKit
 /// and selectors arrive as arguments. That is the seam. `QuoteScreen` decides
 /// behaviour, this decides appearance.
 enum CoverChrome {
+  /// Marks the controls a pinned cover or a return card adds, so they can be
+  /// taken off again as a group. Any value that is not a tag anyone else uses;
+  /// zero is every view's default and would match the whole screen.
+  static let cardChromeTag = 0x5150
+
+  /// Strips them. Safe on a cover that never had any.
+  static func removeCardChrome(from container: UIView) {
+    container.subviews.filter { $0.tag == cardChromeTag }.forEach { $0.removeFromSuperview() }
+  }
+
   /// The countdown at the top of the cover: how long the phrase has left, and
   /// what a finger is doing about it.
   ///
@@ -133,6 +143,10 @@ enum CoverChrome {
     /// it over on a whole ring that has no time behind it.
     func drain(over seconds: TimeInterval, of total: TimeInterval) {
       guard seconds > 0, total > 0 else { return }
+      // Before anything else. A resumed relay drains twice, and the link from
+      // the first one would otherwise go on ticking forever with nothing to
+      // stop it: `stopTicking` only ever holds the newest.
+      stopTicking()
       countdown.removeAnimation(forKey: "sweep")
       countdown.opacity = 1
       number.alpha = 1
@@ -403,10 +417,15 @@ enum CoverChrome {
     let shareButton = chromeButton(symbol: "square.and.arrow.up", label: strings["share"] ?? "Share",
                                    target: target, action: share, tint: foreground)
 
-    container.addSubview(tally)
-    container.addSubview(back)
-    container.addSubview(copyButton)
-    container.addSubview(shareButton)
+    // Tagged so `QuoteScreen` can take them off again without knowing what they
+    // are. A pinned cover that is walked away from is left standing on purpose,
+    // and the next relay reuses it: without this, its Copy, Share and "Open The
+    // Simple Phone" came along, and that last one silently cancels the launch
+    // the user just asked for.
+    for view in [tally, back, copyButton, shareButton] as [UIView] {
+      view.tag = cardChromeTag
+      container.addSubview(view)
+    }
     NSLayoutConstraint.activate([
       shareButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
       shareButton.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 8),

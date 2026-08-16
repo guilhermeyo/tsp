@@ -530,7 +530,7 @@ enum RelayGateTests {
   /// should carry on from where the clock stopped, not start over and not skip.
   static func testAnUnfinishedCountdownResumesWithWhatWasLeft() {
     var suspension = RelaySuspension()
-    suspension.interrupted(pinned: false, secondsLeft: 0.9, total: 1.5, at: 100)
+    suspension.interrupted(pinned: false, held: false, secondsLeft: 0.9, total: 1.5, at: 100)
     check(suspension.isPending, "an interrupted countdown is owed")
     let resumed = suspension.resume(at: 130)
     check(resumed?.secondsLeft == 0.9, "it resumes with the time that was left")
@@ -542,16 +542,43 @@ enum RelayGateTests {
   /// to stop offering it back. Pinning is the user saying they want this line.
   static func testAPinnedCoverResumesHoweverLongItTakes() {
     var suspension = RelaySuspension()
-    suspension.interrupted(pinned: true, secondsLeft: 0, total: 1.5, at: 0)
+    suspension.interrupted(pinned: true, held: false, secondsLeft: 0, total: 1.5, at: 0)
     let resumed = suspension.resume(at: 60 * 60 * 24)
     check(resumed?.pinned == true, "a pin is still owed a day later")
+    check(resumed?.held == false, "and it was not merely a finger resting")
+  }
+
+  /// A FINGER RESTING IS NOT A PIN, and the difference is the whole reason
+  /// these are two flags rather than one.
+  ///
+  /// Both come back rather than counting down, because nobody keeps a finger on
+  /// the glass through a locked screen and resuming a countdown that was being
+  /// held back is the one reading the user certainly did not ask for. But a
+  /// cover that was PINNED already carries the pin's controls and the drag that
+  /// leaves it, and one that was merely held carries none of them. Collapsing
+  /// the two locked a cover with no way off it at all.
+  static func testARestingFingerIsRememberedAsHeldRatherThanPinned() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: false, held: true, secondsLeft: 0.9, total: 1.5, at: 0)
+    let resumed = suspension.resume(at: 10)
+    check(resumed?.held == true, "a finger that was down is remembered as held")
+    check(resumed?.pinned == false, "and NOT as a pin, which would promise controls it never built")
+  }
+
+  /// A held cover is as inert as a pinned one once it comes back, so it gets
+  /// the same absence of a deadline.
+  static func testAHeldCoverAlsoResumesHoweverLongItTakes() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: false, held: true, secondsLeft: 0.9, total: 1.5, at: 0)
+    check(suspension.resume(at: 60 * 60 * 24)?.held == true,
+          "a hold is still owed a day later, because it will not leave on its own either")
   }
 
   /// An unfinished countdown is NOT inert: resuming it hands the user to another
   /// app. Long enough after the fact, that is an ambush rather than a courtesy.
   static func testAStaleCountdownIsDroppedRatherThanResumed() {
     var suspension = RelaySuspension()
-    suspension.interrupted(pinned: false, secondsLeft: 0.9, total: 1.5, at: 0)
+    suspension.interrupted(pinned: false, held: false, secondsLeft: 0.9, total: 1.5, at: 0)
     check(suspension.resume(at: RelaySuspension.window + 1) == nil,
           "a countdown nobody came back for does not open anything")
   }
@@ -560,7 +587,7 @@ enum RelayGateTests {
   /// activation instead, which is the same ambush one foregrounding later.
   static func testAStaleCountdownIsConsumedToo() {
     var suspension = RelaySuspension()
-    suspension.interrupted(pinned: false, secondsLeft: 0.9, total: 1.5, at: 0)
+    suspension.interrupted(pinned: false, held: false, secondsLeft: 0.9, total: 1.5, at: 0)
     _ = suspension.resume(at: RelaySuspension.window + 1)
     check(!suspension.isPending, "the stale offer is gone rather than pending")
   }
@@ -569,7 +596,7 @@ enum RelayGateTests {
   /// app to use it, not someone still returning from the relay.
   static func testResumingConsumesTheOffer() {
     var suspension = RelaySuspension()
-    suspension.interrupted(pinned: true, secondsLeft: 0, total: 1.5, at: 0)
+    suspension.interrupted(pinned: true, held: false, secondsLeft: 0, total: 1.5, at: 0)
     _ = suspension.resume(at: 1)
     check(suspension.resume(at: 2) == nil, "the offer is taken only once")
   }
@@ -577,7 +604,7 @@ enum RelayGateTests {
   /// A new relay supersedes an interrupted one: the user chose something else.
   static func testClearDropsTheOffer() {
     var suspension = RelaySuspension()
-    suspension.interrupted(pinned: true, secondsLeft: 0, total: 1.5, at: 0)
+    suspension.interrupted(pinned: true, held: false, secondsLeft: 0, total: 1.5, at: 0)
     suspension.clear()
     check(!suspension.isPending, "clearing drops it")
     check(suspension.resume(at: 1) == nil, "and nothing comes back")
@@ -587,7 +614,7 @@ enum RelayGateTests {
   /// is somehow always fresh. Same rule the return card follows.
   static func testACountdownFromTheFutureIsRefused() {
     var suspension = RelaySuspension()
-    suspension.interrupted(pinned: false, secondsLeft: 0.9, total: 1.5, at: 500)
+    suspension.interrupted(pinned: false, held: false, secondsLeft: 0.9, total: 1.5, at: 500)
     check(suspension.resume(at: 100) == nil, "a suspension in the future is not resumed")
   }
 
@@ -763,6 +790,8 @@ enum RelayGateTests {
     testNothingInterruptedResumesNothing()
     testAnUnfinishedCountdownResumesWithWhatWasLeft()
     testAPinnedCoverResumesHoweverLongItTakes()
+    testARestingFingerIsRememberedAsHeldRatherThanPinned()
+    testAHeldCoverAlsoResumesHoweverLongItTakes()
     testAStaleCountdownIsDroppedRatherThanResumed()
     testAStaleCountdownIsConsumedToo()
     testResumingConsumesTheOffer()

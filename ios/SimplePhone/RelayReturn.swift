@@ -93,8 +93,20 @@ struct RelaySuspension {
   static let window: TimeInterval = 120
 
   struct Resumed {
-    /// Nothing leaves on its own; wait for the user.
+    /// The cover was ALREADY pinned, so it still carries the pin's controls and
+    /// the drag that leaves it. Locking again is the whole restoration.
     let pinned: Bool
+    /// A finger was merely resting on it. Nothing leaves on its own either --
+    /// nobody keeps a finger on the glass through a locked screen, and resuming
+    /// a countdown that was being held back is the one reading the user
+    /// certainly did not ask for -- but NONE of the pin's furniture was ever
+    /// built, so the caller has to build it before locking.
+    ///
+    /// Collapsing this into `pinned` produced a full-screen cover with no
+    /// countdown, no controls and no working gesture, which survived being
+    /// relaunched. `docs/native-notes.md` calls that the worst failure this
+    /// code can have.
+    let held: Bool
     /// What was still on the clock when everything stopped.
     let secondsLeft: TimeInterval
     /// What it had been in total, so the ring can pick the sweep up part way
@@ -104,20 +116,23 @@ struct RelaySuspension {
 
   private var at: TimeInterval?
   private var pinned = false
+  private var held = false
   private var secondsLeft: TimeInterval = 0
   private var total: TimeInterval = 0
 
   /// The relay stopped without ever handing off.
   ///
-  /// A finger down at this moment counts as a pin, and that is a decision
+  /// A finger down at this moment is worth remembering, and that is a decision
   /// rather than a shortcut. Holding means "I am still reading"; nobody can
   /// keep a finger on the glass through a locked screen, and resuming a
   /// countdown that was being held back is the one reading of the situation the
-  /// user certainly did not ask for.
-  mutating func interrupted(pinned: Bool, secondsLeft: TimeInterval,
+  /// user certainly did not ask for. It is kept SEPARATE from a pin because the
+  /// two come back to different covers: see `Resumed.held`.
+  mutating func interrupted(pinned: Bool, held: Bool, secondsLeft: TimeInterval,
                             total: TimeInterval, at now: TimeInterval) {
     self.at = now
     self.pinned = pinned
+    self.held = held && !pinned
     self.secondsLeft = max(secondsLeft, 0)
     self.total = max(total, 0)
   }
@@ -127,10 +142,12 @@ struct RelaySuspension {
   /// on the next activation instead.
   mutating func resume(at now: TimeInterval) -> Resumed? {
     guard let at else { return nil }
-    let taken = Resumed(pinned: pinned, secondsLeft: secondsLeft, total: total)
+    let taken = Resumed(pinned: pinned, held: held, secondsLeft: secondsLeft, total: total)
     clear()
     guard now >= at else { return nil }
-    guard taken.pinned || now - at <= Self.window else { return nil }
+    // Only a countdown expires. Neither of the other two leaves on its own, so
+    // neither can ambush anyone by being offered back late.
+    guard taken.pinned || taken.held || now - at <= Self.window else { return nil }
     return taken
   }
 
@@ -138,6 +155,7 @@ struct RelaySuspension {
   mutating func clear() {
     at = nil
     pinned = false
+    held = false
     secondsLeft = 0
     total = 0
   }
