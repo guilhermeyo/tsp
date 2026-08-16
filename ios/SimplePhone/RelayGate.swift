@@ -3,7 +3,8 @@ import Foundation
 /// Decides WHEN the relay may hand off to the target app.
 ///
 /// The target opens once the chosen duration has run out and nothing is holding
-/// the cover. A finger holds it; holding long enough pins it, and a pinned cover
+/// the cover. A finger holds it, and dragging that finger far enough pins it --
+/// distance, not duration, and the caller owns that measurement. A pinned cover
 /// only ever leaves through `proceed` or `reset`.
 ///
 /// Two invariants, both load-bearing:
@@ -83,7 +84,7 @@ final class RelayGate {
     isDue = true
   }
 
-  /// The finger held long enough to mean it.
+  /// The finger travelled far enough to mean it.
   func lock() {
     isLocked = true
   }

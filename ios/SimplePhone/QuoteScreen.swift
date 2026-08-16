@@ -207,6 +207,13 @@ enum QuoteScreen {
   /// the phrase exists to cover -- unguarded.
   static func endRelay() {
     relayInFlight = false
+    // Every route that reports a finger stops at `relayInFlight`, so a finger
+    // still down when the relay ends has no way left to report its own lift:
+    // the gate would keep holding for a hand that is no longer there, and
+    // `arm` only inherits-and-clears a finger that came with a pin. Nothing
+    // else covers a cover walked away from mid-hold.
+    gate.reset()
+    forgetHold()
   }
 
   /// Puts the cover up and returns how long to hold before opening the target.
@@ -455,6 +462,10 @@ enum QuoteScreen {
   /// starts moving from the same instant.
   private static var holdOrigin: CGPoint = .zero
 
+  /// WHICH finger the origin belongs to. Weak, because UIKit owns the touch and
+  /// recycles it once the gesture is over.
+  private static weak var holdTouch: UITouch?
+
   /// The phrase's own clock, started at the moment the cover becomes touchable
   /// rather than at the moment the relay began. Why they are different, and why
   /// this is the honest one: `docs/native-notes.md`, "A countdown that cannot
@@ -476,33 +487,56 @@ enum QuoteScreen {
   ///
   /// No badge means no phrase on the cover -- Phrases switched off, or an empty
   /// list -- and there is nothing to hold a blank rectangle for.
-  fileprivate static func fingerLanded(at point: CGPoint) {
+  fileprivate static func fingerLanded(_ touch: UITouch?, at point: CGPoint) {
     guard relayInFlight, !gate.locked, !isHolding, let badge else { return }
     isHolding = true
+    holdTouch = touch
     holdOrigin = point
 
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
     badge.hold()
   }
 
-  /// The finger is dragging. Downward travel closes the pin; coming back up
-  /// opens it again, which is how someone backs out of a gesture they started
-  /// by accident.
+  /// The finger is dragging. Travelling away from where it started closes the
+  /// pin; coming back towards it opens the pin again, which is how someone backs
+  /// out of a gesture they began by accident.
   ///
-  /// Only the vertical component counts. Sideways means something on a cover
-  /// that is already pinned, and asking one axis to answer two questions is how
-  /// a thumb's natural arc ends up choosing for the user.
-  fileprivate static func fingerMoved(to point: CGPoint) {
-    guard isHolding, !gate.locked, let badge else { return }
-    let travelled = (point.y - holdOrigin.y) / pinTravel
-    let closed = min(max(travelled, 0), 1)
+  /// EITHER WAY ALONG THE VERTICAL, and down is not privileged even though down
+  /// is the natural way to do it. A threshold measured only downwards is
+  /// unreachable from the bottom `pinTravel` points of the screen, because the
+  /// glass runs out before the distance does -- and that band is the thumb zone,
+  /// where a thumb rests when the phone is held in one hand. Worse than
+  /// unreachable, it is unrecoverable: `press` marks the relay due, so lifting
+  /// to try again from higher up hands off instead, and the user gets one
+  /// attempt whose success depends on where their thumb happened to land. The
+  /// ring would answer the drag, stall part closed, and read as a broken app.
+  ///
+  /// Only the vertical counts. Sideways means something on a cover that is
+  /// already pinned, and asking one axis to answer two questions is how a
+  /// thumb's natural arc ends up choosing for the user.
+  ///
+  /// Ignores any finger but the one that anchored the origin. `UIEvent`
+  /// delivers touches in an unordered `Set`, so a second finger resting on the
+  /// glass would otherwise have its position measured against the FIRST
+  /// finger's origin: the distance between two thumbs, read as a drag nobody
+  /// made, pinning the cover with no travel at all.
+  fileprivate static func fingerMoved(_ touch: UITouch?, to point: CGPoint) {
+    guard isHolding, touch === holdTouch, !gate.locked, let badge else { return }
+    let closed = min(abs(point.y - holdOrigin.y) / pinTravel, 1)
     badge.pinProgress(closed)
     guard closed >= 1 else { return }
     engageLock()
   }
 
   /// The finger left before the ring closed.
-  private static func fingerLeft() {
+  ///
+  /// A `touch` names which one lifted; nil means every finger is off the glass,
+  /// or that the caller is tearing the cover down rather than reporting a
+  /// gesture. Lifting a finger that was not driving the hold is not this finger
+  /// lifting: with two down, letting go of the passenger used to wipe the origin
+  /// and unwind the ring under a thumb that had not moved.
+  private static func fingerLeft(_ touch: UITouch? = nil) {
+    if let touch, let holdTouch, touch !== holdTouch { return }
     let wasHolding = isHolding
     forgetHold()
     // A pin outlives the finger that made it. Without this, lifting off a cover
@@ -532,6 +566,7 @@ enum QuoteScreen {
   private static func forgetHold() {
     isHolding = false
     holdOrigin = .zero
+    holdTouch = nil
   }
 
   /// The drag went the distance. From here nothing leaves on its own.
@@ -597,6 +632,11 @@ enum QuoteScreen {
       return
     }
     gate.proceed()
+    // `proceed` unlocks, and the tap that triggered it is still on its way to
+    // `touchesEnded`. Without forgetting the hold first, that trailing lift
+    // finds the gate unlocked and winds the badge back to a full countdown as
+    // the app leaves.
+    forgetHold()
     // The handoff `proceed` fires records the return like any other, and it is
     // LEFT ALONE on purpose.
     //
@@ -959,15 +999,20 @@ enum QuoteScreen {
         // the view, having begun while the home screen still owned it. Its DRAG
         // is invisible to the view for the same reason, so the pin has to be
         // driven from here too.
-        if let touch = touches.first(where: { $0.phase != .ended && $0.phase != .cancelled }) {
+        //
+        // Every live touch is offered rather than an arbitrary one picked out
+        // of the Set. The guards inside decide: the first one through anchors
+        // the origin, and after that only the finger holding it is listened to.
+        for touch in touches where touch.phase != .ended && touch.phase != .cancelled {
           let point = touch.location(in: rootViewController?.view)
-          QuoteScreen.fingerLanded(at: point)
-          QuoteScreen.fingerMoved(to: point)
+          QuoteScreen.fingerLanded(touch, at: point)
+          QuoteScreen.fingerMoved(touch, to: point)
         }
       } else {
         QuoteScreen.gate.release()
         // Symmetrically, and for the same reason: the finger this route exists
         // to hear is one `CoverView` never gets a `touchesEnded` for either.
+        // Nil, because this branch means every finger is off the glass.
         QuoteScreen.fingerLeft()
       }
     }
@@ -988,7 +1033,7 @@ enum QuoteScreen {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesBegan(touches, with: event)
       QuoteScreen.gate.press()
-      if let point = touches.first?.location(in: self) { QuoteScreen.fingerLanded(at: point) }
+      for touch in touches { QuoteScreen.fingerLanded(touch, at: touch.location(in: self)) }
     }
 
     /// A finger that was ALREADY DOWN when the cover became touchable.
@@ -1010,21 +1055,39 @@ enum QuoteScreen {
       // The finger that landed during the animation has no `began` here.
       // `fingerLanded` ignores repeats, so this both adopts that finger and
       // reports the ordinary drag.
-      guard let point = touches.first?.location(in: self) else { return }
-      QuoteScreen.fingerLanded(at: point)
-      QuoteScreen.fingerMoved(to: point)
+      for touch in touches {
+        let point = touch.location(in: self)
+        QuoteScreen.fingerLanded(touch, at: point)
+        QuoteScreen.fingerMoved(touch, to: point)
+      }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesEnded(touches, with: event)
+      // Only a lift when it is the LAST lift. `touchesEnded` carries the ended
+      // subset, so with two fingers down this fires for the one that let go
+      // while the other is still holding the cover back.
+      guard !stillDown(besides: touches, in: event) else {
+        touches.forEach { QuoteScreen.fingerLeft($0) }
+        return
+      }
       QuoteScreen.gate.release()
-      QuoteScreen.fingerLeft()
+      touches.forEach { QuoteScreen.fingerLeft($0) }
+    }
+
+    private func stillDown(besides ended: Set<UITouch>, in event: UIEvent?) -> Bool {
+      guard let all = event?.allTouches else { return false }
+      return all.contains { !ended.contains($0) && $0.phase != .ended && $0.phase != .cancelled }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesCancelled(touches, with: event)
+      guard !stillDown(besides: touches, in: event) else {
+        touches.forEach { QuoteScreen.fingerLeft($0) }
+        return
+      }
       QuoteScreen.gate.cancelPress()
-      QuoteScreen.fingerLeft()
+      touches.forEach { QuoteScreen.fingerLeft($0) }
     }
   }
 
@@ -1080,9 +1143,13 @@ enum QuoteScreen {
       switch recognizer.state {
       case .began, .changed:
         QuoteScreen.gate.press()
+        // Nil, because a recogniser hands over no `UITouch` to name. It reads
+        // as its own identity: this route can anchor a hold nobody else has,
+        // and can then only drive that one, because any hold anchored by a real
+        // touch has a non-nil owner that nil will never match.
         let point = recognizer.location(in: recognizer.view)
-        QuoteScreen.fingerLanded(at: point)
-        QuoteScreen.fingerMoved(to: point)
+        QuoteScreen.fingerLanded(nil, at: point)
+        QuoteScreen.fingerMoved(nil, to: point)
       case .ended, .cancelled, .failed:
         QuoteScreen.gate.release()
         QuoteScreen.fingerLeft()

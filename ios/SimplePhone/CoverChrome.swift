@@ -47,7 +47,10 @@ enum CoverChrome {
   /// listening for a finger.
   final class Badge: UIView {
     private static let ringRadius: CGFloat = 25
-    private static let side: CGFloat = 58
+    /// Everything inside is laid out against this ONCE, at init: the ring's
+    /// centre, the number's frame and the pause's centre. `addBadge` constrains
+    /// the view to the same number, so the two must not drift apart.
+    fileprivate static let side: CGFloat = 58
     private static let thin: CGFloat = 2
     private static let thick: CGFloat = 3.5
 
@@ -145,11 +148,12 @@ enum CoverChrome {
     func hold() {
       stopTicking()
       // Where the eye last saw it, not where the model says. Mid-animation the
-      // two are a whole countdown apart.
-      if let shown = countdown.presentation()?.strokeStart {
-        countdown.removeAnimation(forKey: "sweep")
-        countdown.strokeStart = shown
-      }
+      // two are a whole countdown apart. Removing the sweep is unconditional:
+      // leaving it running whenever `presentation` came back nil would let the
+      // ring carry on emptying behind a pause that says it stopped.
+      let shown = countdown.presentation()?.strokeStart ?? countdown.strokeStart
+      countdown.removeAnimation(forKey: "sweep")
+      countdown.strokeStart = shown
       // A crossfade rather than a cut: the pin starts at nothing, so cutting
       // the countdown would leave the badge ringless for the first moments of
       // the very gesture it is meant to be reporting.
@@ -256,8 +260,8 @@ enum CoverChrome {
     NSLayoutConstraint.activate([
       badge.centerXAnchor.constraint(equalTo: container.centerXAnchor),
       badge.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 2),
-      badge.widthAnchor.constraint(equalToConstant: 58),
-      badge.heightAnchor.constraint(equalToConstant: 58),
+      badge.widthAnchor.constraint(equalToConstant: Badge.side),
+      badge.heightAnchor.constraint(equalToConstant: Badge.side),
     ])
     return badge
   }

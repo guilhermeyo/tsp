@@ -538,9 +538,9 @@ continues the first.
 ## Hold to read, drag to keep
 
 The pin is driven by DISTANCE, not by time. Resting a finger pauses the cover,
-for as long as you like, and commits to nothing. Dragging down closes the pin
-ring in proportion to how far the finger has travelled; dragging back up opens
-it again; whole means pinned.
+for as long as you like, and commits to nothing. Dragging closes the pin ring in
+proportion to how far the finger has travelled; coming back toward where it
+started opens it again; whole means pinned.
 
 It was a 1.2 second hold first, and the reason it changed is the dead window
 above. A timed hold asks the user to commit before they know whether they were
@@ -561,6 +561,23 @@ from that same instant.
 Only the vertical component counts. Sideways already means something on a cover
 that is pinned, and asking one axis to answer two questions is how a thumb's
 natural arc ends up deciding for the user.
+
+**Either way along that axis**, even though down is the natural way to do it. A
+threshold measured only downwards is unreachable from the bottom 120pt of the
+screen, because the glass runs out before the distance does — and that band is
+exactly where a thumb rests when the phone is held in one hand. Worse than
+unreachable, it is unrecoverable: a press marks the relay due, so lifting to try
+again from higher up hands off instead. The user would get one attempt per relay,
+its success decided by where their thumb happened to land, and the ring would
+answer the drag, stall part closed, and read as a broken app.
+
+The travel belongs to **one** finger, named by its `UITouch`. `UIEvent` delivers
+touches in an unordered `Set`, so without an identity a second finger resting on
+the glass has its position measured against the first finger's origin: the
+distance between two thumbs, read as a drag nobody made, pinning the cover with
+no travel at all. For the same reason a lift is only a lift when it is the last
+one — letting go of the passenger used to wipe the origin and unwind the ring
+under a thumb that had not moved.
 
 A **pause** sits at the centre once a finger is down, and stays after the pin.
 Not a padlock: a padlock says you cannot leave, which is false, since a tap, a

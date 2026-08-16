@@ -291,7 +291,7 @@ enum RelayGateTests {
 
   // MARK: - The lock: a cover pinned on purpose
 
-  /// Holding long enough pins the cover. The chosen duration stops mattering.
+  /// Dragging far enough pins the cover. The chosen duration stops mattering.
   static func testLockSurvivesTheDuration() {
     let gate = RelayGate()
     var opened = 0
@@ -391,7 +391,7 @@ enum RelayGateTests {
     check(opened == 1, "and proceeding still works")
   }
 
-  /// The flag the UI reads to know whether to draw a padlock.
+  /// The flag the UI reads to know the cover is pinned rather than merely slow.
   static func testLockedIsVisible() {
     let gate = RelayGate()
     gate.arm {}
