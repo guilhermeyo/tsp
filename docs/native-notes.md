@@ -562,14 +562,86 @@ Only the vertical component counts. Sideways already means something on a cover
 that is pinned, and asking one axis to answer two questions is how a thumb's
 natural arc ends up deciding for the user.
 
-**Either way along that axis**, even though down is the natural way to do it. A
-threshold measured only downwards is unreachable from the bottom 120pt of the
-screen, because the glass runs out before the distance does — and that band is
-exactly where a thumb rests when the phone is held in one hand. Worse than
-unreachable, it is unrecoverable: a press marks the relay due, so lifting to try
-again from higher up hands off instead. The user would get one attempt per relay,
-its success decided by where their thumb happened to land, and the ring would
-answer the drag, stall part closed, and read as a broken app.
+### The whole of the gesture
+
+A finger down on the cover can end in exactly four ways, and only one of them
+needs anything more than lifting.
+
+| What the finger does | Glyph | Ring | On lifting |
+| --- | --- | --- | --- |
+| Rests, or moves under 8pt | pause | at nothing | the countdown resumes where it stopped |
+| Drags **down** under 120pt | pause | part closed | the countdown resumes where it stopped |
+| Drags **down** past 120pt | pause | closed, one buzz | the cover is pinned |
+| Drags **sideways** under 60pt | forward | part closed | the countdown resumes where it stopped |
+| Drags **sideways** past 60pt | forward | closed, one buzz | goes to the app |
+| Is cancelled by the system | — | — | same as resting: the countdown resumes |
+
+**Nothing acts while the finger is down.** Closing a ring is a promise about
+what lifting will do and nothing more, which is what makes both gestures
+retractable: drag back, the ring opens, the buzz is taken back, the finger is
+free again.
+
+Pinning used to fire the moment its ring completed, on the reasoning that the
+finger stops mattering once the cover is staying. It read as the gesture going
+off in the user's hand — the cover pinned itself and its controls appeared under
+a thumb that was still moving, with no way back short of the exits. The two
+gestures also stopped rhyming, and one of them having a different relationship
+with the finger than the other is the kind of thing a hand notices before a head
+can name it.
+
+**One gesture at a time**, decided by whichever axis has travelled further, and
+the ring and the glyph always agree because the same answer picks both. Switching
+axes mid-drag hands both over: a sideways drag that turns downward becomes a pin
+in progress, and the arrow becomes a pause again.
+
+Letting the two run side by side is what put a forward arrow on a cover that had
+just been pinned. The ring answered the drag down while the glyph still answered
+the drag sideways, and neither was wrong on its own — which is the tell that the
+model was missing, not the drawing.
+
+**8 points of slack** before either axis owns anything. Below that a resting
+thumb's own tremor decides which is larger, and the glyph flickers between pause
+and forward on a hand that is holding still.
+
+**Sixty points against a hundred and twenty**, because they ask for different
+things. Skipping ahead only brings forward what the cover was going to do on its
+own; pinning takes the launch away entirely and should cost more than a flinch.
+
+### Leaving a cover that is already pinned
+
+The same gesture, the same glyph, the same ring, the same sixty points. **The way
+out has the shape of the way in**, which is the only reason anyone would guess it
+exists. The rings were retired when the cover pinned, so the drag brings them
+back, and a drag that stops short puts the pinned look straight back.
+
+There used to be a tap here as well and it is gone. It was the one way out of
+this cover that cost nothing, on a cover that exists *because* the user
+deliberately stopped the screen from moving, so a stray thumb undid the very
+thing they had asked for. It was also the only gesture on the whole cover that
+acted with no ring behind it. The button at the bottom is still there for
+anyone who would rather aim at a target than drag.
+
+The exit's armed flag is its own rather than the hold's, because
+`CoverView.touchesEnded` calls `forgetHold` on a pinned cover too and UIKit gives
+no order between that callback and a recogniser's `.ended`. Sharing one flag made
+the exit work or not depending on which arrived first.
+
+### Down only, and what makes that survivable
+
+Coming back up unwinds the pin ring rather than closing it from the other side,
+which is what makes backing out feel like backing out.
+
+That leaves the bottom 120pt of the screen unable to reach the threshold, because
+the glass runs out before the distance does, and that band is exactly where a
+thumb rests when the phone is held in one hand.
+
+It is survivable only because **lifting no longer hands off**. A thumb that
+landed too low presses again higher up and loses nothing: the countdown simply
+carries on. Under the earlier rule, where a press marked the relay due, the same
+finger cost the user their launch — one attempt per relay, its success decided by
+where the thumb happened to land, with the ring answering the drag, stalling part
+closed, and reading as a broken app. The fix at the time was to accept an upward
+drag as well. Making a press mean nothing on its own replaced it.
 
 The travel belongs to **one** finger, named by its `UITouch`. `UIEvent` delivers
 touches in an unordered `Set`, so without an identity a second finger resting on

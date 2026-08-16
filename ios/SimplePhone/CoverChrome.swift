@@ -61,7 +61,11 @@ enum CoverChrome {
     /// The pin: starts at nothing, fills clockwise.
     private let pin = CAShapeLayer()
     private let pause = UIImageView()
+    /// Shown in the pause's place once a sideways drag has gone far enough that
+    /// lifting will go straight to the app.
+    private let forward = UIImageView()
     private let number = UILabel()
+    private var skipping = false
 
     /// When the countdown reaches nothing, on the same clock CoreAnimation uses.
     private var endsAt: CFTimeInterval = 0
@@ -105,12 +109,14 @@ enum CoverChrome {
       // Coloured into the image rather than left to `tintColor`, which a plain
       // UIImageView only honours for a template image. See `docs/native-notes.md`,
       // "SF Symbols in a UIImageView".
-      pause.image = UIImage(systemName: "pause.fill", withConfiguration: symbol)?
-        .withTintColor(colour.withAlphaComponent(0.75), renderingMode: .alwaysOriginal)
-      pause.sizeToFit()
-      pause.center = centre
-      pause.alpha = 0
-      addSubview(pause)
+      for (view, name) in [(pause, "pause.fill"), (forward, "forward.fill")] {
+        view.image = UIImage(systemName: name, withConfiguration: symbol)?
+          .withTintColor(colour.withAlphaComponent(0.75), renderingMode: .alwaysOriginal)
+        view.sizeToFit()
+        view.center = centre
+        view.alpha = 0
+        addSubview(view)
+      }
     }
 
     @available(*, unavailable)
@@ -121,14 +127,23 @@ enum CoverChrome {
     /// The phrase's own clock has started. Called when the cover becomes
     /// touchable, not when the relay began: see `docs/native-notes.md`,
     /// "A countdown that cannot lie".
-    func drain(over seconds: TimeInterval) {
-      guard seconds > 0 else { return }
+    /// `total` is what the countdown was to begin with. It differs from
+    /// `seconds` only when a relay is being resumed after an interruption, and
+    /// the ring then picks the sweep up where it stopped rather than starting
+    /// it over on a whole ring that has no time behind it.
+    func drain(over seconds: TimeInterval, of total: TimeInterval) {
+      guard seconds > 0, total > 0 else { return }
       countdown.removeAnimation(forKey: "sweep")
+      countdown.opacity = 1
+      number.alpha = 1
+      skipping = false
+      pause.alpha = 0
+      forward.alpha = 0
       // Model value at the destination, so it simply stays there when the
       // animation ends rather than needing to be kept alive past its own life.
       countdown.strokeStart = 1
       let sweep = CABasicAnimation(keyPath: "strokeStart")
-      sweep.fromValue = 0
+      sweep.fromValue = 1 - min(CGFloat(seconds / total), 1)
       sweep.toValue = 1
       sweep.duration = seconds
       // Linear, because it is a clock. Any easing here would be the ring
@@ -164,13 +179,27 @@ enum CoverChrome {
       countdown.opacity = 0
       countdown.add(handover, forKey: "handover")
 
+      skipping = false
       pause.alpha = 0
+      forward.alpha = 0
       UIView.animate(withDuration: 0.18) {
         self.pause.alpha = 1
         self.number.alpha = 0
       }
 
       pinProgress(0)
+    }
+
+    /// The drag has gone far enough sideways that lifting means go, or has come
+    /// back from it. The glyph is the only feedback this gesture gets, which is
+    /// the point: nothing is being built up, so there is nothing to watch fill.
+    func showSkip(_ on: Bool) {
+      guard skipping != on else { return }
+      skipping = on
+      UIView.animate(withDuration: 0.15) {
+        self.pause.alpha = on ? 0 : 1
+        self.forward.alpha = on ? 1 : 0
+      }
     }
 
     /// How far down the drag has got, from nothing to whole.
@@ -182,6 +211,13 @@ enum CoverChrome {
     func pinProgress(_ fraction: CGFloat) {
       CATransaction.begin()
       CATransaction.setDisableActions(true)
+      // Both rings are brought back, which matters only on a cover that is
+      // ALREADY pinned: `pinned` retired them, and the drag that leaves reuses
+      // this so the way out looks like the way in.
+      for layer in [track, pin] {
+        layer.removeAnimation(forKey: "retire")
+        layer.opacity = 1
+      }
       pin.strokeEnd = fraction
       pin.lineWidth = Self.thin + (Self.thick - Self.thin) * fraction
       CATransaction.commit()
@@ -195,7 +231,9 @@ enum CoverChrome {
       pinProgress(0)
       countdown.removeAnimation(forKey: "handover")
       countdown.opacity = 1
+      skipping = false
       pause.alpha = 0
+      forward.alpha = 0
       number.alpha = 1
     }
 
@@ -216,6 +254,11 @@ enum CoverChrome {
         layer.opacity = 0
         layer.add(fade, forKey: "retire")
       }
+      // The pin is the last word, so the badge says only what it means. Leaving
+      // the forward arrow up put it over the pause on any cover pinned by a
+      // drag that had gone sideways first, and it is drawn later, so it won.
+      skipping = false
+      forward.alpha = 0
       pause.alpha = 1
       number.alpha = 0
     }

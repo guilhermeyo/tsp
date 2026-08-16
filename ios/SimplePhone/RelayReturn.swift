@@ -65,3 +65,82 @@ struct RelayReturn {
   /// out, which is why it is not private.
   var isPending: Bool { handoffAt != nil }
 }
+
+/// Decides whether coming back should put the user where the relay was, rather
+/// than tearing the cover down as if it had finished.
+///
+/// A relay that ends without handing off did not finish, it was INTERRUPTED:
+/// the phone locked its own screen, a call arrived, the user left mid-read. The
+/// app cannot tell those apart, because iOS reports all of them as the same
+/// backgrounding, so the rule has to be good enough for all of them at once.
+///
+/// Two things are being resumed and they carry different risk, which is the
+/// whole of why this type exists rather than a bool:
+///
+/// - **A pin is inert.** It never leaves on its own, so offering it back a day
+///   later costs nothing but a tap. It is also the user having said, in as many
+///   words, that they want this line. No window.
+/// - **A countdown is not inert.** Resuming it hands the user to another app.
+///   Soon after the fact that is a courtesy; long after it is an ambush by a
+///   launch they have forgotten choosing. Hence `window`.
+///
+/// Foundation only, no clock, same as `RelayGate` and `RelayReturn` above, and
+/// for the same reason: `scripts/test-relay-gate` compiles this file.
+struct RelaySuspension {
+  /// How long an unfinished countdown is worth resuming. The same judgement and
+  /// the same number as `RelayReturn.window`, because it is the same question
+  /// asked from the other side.
+  static let window: TimeInterval = 120
+
+  struct Resumed {
+    /// Nothing leaves on its own; wait for the user.
+    let pinned: Bool
+    /// What was still on the clock when everything stopped.
+    let secondsLeft: TimeInterval
+    /// What it had been in total, so the ring can pick the sweep up part way
+    /// through rather than starting it over.
+    let total: TimeInterval
+  }
+
+  private var at: TimeInterval?
+  private var pinned = false
+  private var secondsLeft: TimeInterval = 0
+  private var total: TimeInterval = 0
+
+  /// The relay stopped without ever handing off.
+  ///
+  /// A finger down at this moment counts as a pin, and that is a decision
+  /// rather than a shortcut. Holding means "I am still reading"; nobody can
+  /// keep a finger on the glass through a locked screen, and resuming a
+  /// countdown that was being held back is the one reading of the situation the
+  /// user certainly did not ask for.
+  mutating func interrupted(pinned: Bool, secondsLeft: TimeInterval,
+                            total: TimeInterval, at now: TimeInterval) {
+    self.at = now
+    self.pinned = pinned
+    self.secondsLeft = max(secondsLeft, 0)
+    self.total = max(total, 0)
+  }
+
+  /// The app is activating. Returns what to put back, or nil to carry on as
+  /// usual. Consuming either way: a stale offer left in place would simply fire
+  /// on the next activation instead.
+  mutating func resume(at now: TimeInterval) -> Resumed? {
+    guard let at else { return nil }
+    let taken = Resumed(pinned: pinned, secondsLeft: secondsLeft, total: total)
+    clear()
+    guard now >= at else { return nil }
+    guard taken.pinned || now - at <= Self.window else { return nil }
+    return taken
+  }
+
+  /// A new relay supersedes an interrupted one: the user chose something else.
+  mutating func clear() {
+    at = nil
+    pinned = false
+    secondsLeft = 0
+    total = 0
+  }
+
+  var isPending: Bool { at != nil }
+}
