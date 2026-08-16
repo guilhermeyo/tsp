@@ -497,23 +497,18 @@ enum QuoteScreen {
     // deliberate, unhurried drag to the right never reaches its velocity
     // threshold and is silently ignored, which is exactly what a person doing
     // what the feature describes would do.
+    // Only when there is somewhere to go. A badge that answers a drag leading
+    // nowhere is an offer the card cannot keep.
+    if resumeTarget != nil {
+      badge = CoverChrome.addBadge(to: root, config: config, showsPause: false)
+      badge?.quiet()
+    }
+
     let drag = UIPanGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.resume(_:)))
     drag.cancelsTouchesInView = false
     root.addGestureRecognizer(drag)
 
     root.layoutIfNeeded()
-  }
-
-  /// Far enough sideways, either way, to mean "take me there" rather than a
-  /// finger settling.
-  ///
-  /// Direction is deliberately not checked: asking for one only tests whether
-  /// the user guessed the same convention as the author. Read on `.ended`, so a
-  /// threshold crossed mid-drag cannot fire under a thumb still deciding.
-  private static func draggedSideways(_ recognizer: UIGestureRecognizer) -> Bool {
-    guard let pan = recognizer as? UIPanGestureRecognizer, pan.state == .ended else { return false }
-    let moved = pan.translation(in: pan.view)
-    return abs(moved.x) > 60 && abs(moved.x) > abs(moved.y)
   }
 
   /// Where the user was going when the phrase got away from them.
@@ -526,7 +521,34 @@ enum QuoteScreen {
   /// under someone who came back to read this one. If the open fails the card
   /// simply stays, which is a fair way to say nothing happened.
   fileprivate static func resumeJourney(_ recognizer: UIGestureRecognizer) {
-    guard draggedSideways(recognizer), let target = resumeTarget else { return }
+    guard let pan = recognizer as? UIPanGestureRecognizer, resumeTarget != nil,
+          let badge else { return }
+    let moved = pan.translation(in: pan.view)
+
+    switch pan.state {
+    case .began:
+      exitDrag.began(x: 0, y: 0)
+      return
+    case .changed:
+      // The same arrow over the same sixty points as everywhere else. There is
+      // nothing to count down here, so the badge is invisible until a finger
+      // starts moving and the ring is the only thing it ever draws.
+      show(exitDrag.moved(x: moved.x, y: moved.y), on: badge)
+      return
+    case .ended:
+      let promised = exitDrag.promise
+      exitDrag.end()
+      guard promised == .skipping else {
+        badge.quiet()
+        return
+      }
+    default:
+      exitDrag.end()
+      badge.quiet()
+      return
+    }
+
+    guard let target = resumeTarget else { return }
     resumeTarget = nil
     UIApplication.shared.open(target, options: [:]) { ok in
       // RE-ARM, and this is the part that was missing. Resuming opens the

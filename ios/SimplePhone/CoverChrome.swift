@@ -82,7 +82,13 @@ enum CoverChrome {
     private var ticker: CADisplayLink?
     private let separator = Locale.current.decimalSeparator ?? "."
 
-    init(config: QuoteCatalog.Config) {
+    /// False on the return card, which is not a relay: nothing there is paused,
+    /// so a pause glyph would be describing a state that does not exist. Only
+    /// the way out draws.
+    private let showsPause: Bool
+
+    init(config: QuoteCatalog.Config, showsPause: Bool = true) {
+      self.showsPause = showsPause
       super.init(frame: CGRect(x: 0, y: 0, width: Self.side, height: Self.side))
       isUserInteractionEnabled = false
 
@@ -211,9 +217,28 @@ enum CoverChrome {
       guard skipping != on else { return }
       skipping = on
       UIView.animate(withDuration: 0.15) {
-        self.pause.alpha = on ? 0 : 1
+        self.pause.alpha = (on || !self.showsPause) ? 0 : 1
         self.forward.alpha = on ? 1 : 0
       }
+    }
+
+    /// Nothing at all, until something is asked of it.
+    ///
+    /// The return card's resting state. There is no clock to draw and nothing
+    /// is paused, so the badge stays out of the way and the ring appears only
+    /// once a finger starts moving toward the way out.
+    func quiet() {
+      stopTicking()
+      skipping = false
+      number.alpha = 0
+      pause.alpha = 0
+      forward.alpha = 0
+      for layer in [track, countdown, pin] {
+        layer.removeAnimation(forKey: "retire")
+        layer.opacity = 0
+      }
+      pin.strokeEnd = 0
+      pin.lineWidth = Self.thin
     }
 
     /// How far down the drag has got, from nothing to whole.
@@ -310,8 +335,9 @@ enum CoverChrome {
   /// The badge, centred at the top, on the same line as the copy and share
   /// controls and as the system's own back breadcrumb.
   @discardableResult
-  static func addBadge(to container: UIView, config: QuoteCatalog.Config) -> Badge {
-    let badge = Badge(config: config)
+  static func addBadge(to container: UIView, config: QuoteCatalog.Config,
+                       showsPause: Bool = true) -> Badge {
+    let badge = Badge(config: config, showsPause: showsPause)
     badge.translatesAutoresizingMaskIntoConstraints = false
     container.addSubview(badge)
     NSLayoutConstraint.activate([

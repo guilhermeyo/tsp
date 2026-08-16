@@ -637,6 +637,17 @@ thing they had asked for. It was also the only gesture on the whole cover that
 acted with no ring behind it. The button at the bottom is still there for
 anyone who would rather aim at a target than drag.
 
+The return card's way back to the app you came from is the same gesture again,
+and it uses the same `CoverDrag(canPin: false)`. Its badge starts invisible:
+nothing there is counting and nothing is paused, so the ring appears only once a
+finger begins moving toward the way out, and there is no pause glyph at all — a
+pause on that screen would be describing a state that does not exist. It is only
+added when there IS somewhere to go back to, because a badge answering a drag
+that leads nowhere is an offer the card cannot keep.
+
+Three screens, one gesture: skip ahead from a cover that is counting, leave one
+that is pinned, go back from the card. Same arrow, same sixty points, same ring.
+
 The exit's armed flag is its own rather than the hold's, because
 `CoverView.touchesEnded` calls `forgetHold` on a pinned cover too and UIKit gives
 no order between that callback and a recogniser's `.ended`. Sharing one flag made
