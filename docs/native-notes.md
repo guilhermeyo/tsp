@@ -501,15 +501,95 @@ backgrounding, so a "1.5 second" cover used to offer 1.36 seconds you could
 touch and 0.4 you could only look at. The countdown now starts after
 `touchSettleDelay`, so the number in the Phrases screen means what it says.
 
-**A press on reflex cannot work, and no API can see it.** This is why the ring
-under the thumb matters beyond decoration: a press that draws no ring is a press
-that never arrived. Lift, press again. That is the fact rather than a
-description of it, which is worth more than any hint text.
+**A press on reflex cannot work, and no API can see it.** So the app answers the
+press it did get, immediately and in two ways: a light haptic and the badge
+freezing. A press that does not buzz is a press that never arrived. Lift, press
+again. That is the fact rather than a description of it, which is worth more
+than any hint text.
 
-The ring carries nothing at its centre. A padlock glyph was drawn there once and
-never rendered on a device, while the ring around it always did. An indicator
-that cannot render is worse than none, because it reads as the feature being
-broken, so it went and the ring stayed.
+## A countdown that cannot lie
+
+The badge at the top of the cover shows how long the phrase has left, and its
+countdown **starts when the app can be touched, not when the relay began.**
+
+Starting it at zero was the obvious thing and it is not possible. For that first
+stretch the app is not drawing at all: the screen is a still snapshot the system
+took before the app left, and a still frame cannot count. Anything animated
+there is frozen at whatever value it was painted with and then jumps.
+
+So the start line moves instead. The timer already started at
+`didBecomeActive + touchSettleDelay` for the reason above, and the ring now
+starts there too. The two agree, nothing jumps, and the price is that the phrase
+is on screen for a few hundred milliseconds longer than the ring claims. Nobody
+notices 300ms on a phrase. Everybody notices a counter that jumps.
+
+The alignment then pays for itself twice, because it makes the dead window
+legible without a word of explanation: **a ring that is moving is a cover that
+can be caught.** Before it moves, nothing is reachable and nothing is counting,
+so there is nothing on screen making a promise the platform will not keep.
+
+Both boundaries sweep **clockwise**, and draining is the natural place to get
+that wrong. Animating `strokeEnd` down from whole retracts the arc's leading edge
+anticlockwise, which against a pin that fills clockwise reads as two unrelated
+animations arguing with each other. `strokeStart` up from nothing eats the ring
+away from the same end the pin grows from, so the second gesture looks like it
+continues the first.
+
+## Hold to read, drag to keep
+
+The pin is driven by DISTANCE, not by time. Resting a finger pauses the cover,
+for as long as you like, and commits to nothing. Dragging closes the pin ring in
+proportion to how far the finger has travelled; coming back toward where it
+started opens it again; whole means pinned.
+
+It was a 1.2 second hold first, and the reason it changed is the dead window
+above. A timed hold asks the user to commit before they know whether they were
+heard: a press that never arrived cost them the entire wait before anything told
+them so. A drag answers in the first millimetre, because the ring is following
+the thumb rather than a clock.
+
+It also separates two intentions that a timeout had to guess between. Wanting to
+finish reading and wanting to keep the line are different things, and neither is
+now a timeout on the other.
+
+The travel is measured from where the finger was first **seen**, not from where
+it landed — on a warm relay those are not the same point, since the first
+stretch of the touch belonged to the home screen. Seen is the honest baseline
+and it is the one the user's eye agrees with, because the ring starts moving
+from that same instant.
+
+Only the vertical component counts. Sideways already means something on a cover
+that is pinned, and asking one axis to answer two questions is how a thumb's
+natural arc ends up deciding for the user.
+
+**Either way along that axis**, even though down is the natural way to do it. A
+threshold measured only downwards is unreachable from the bottom 120pt of the
+screen, because the glass runs out before the distance does — and that band is
+exactly where a thumb rests when the phone is held in one hand. Worse than
+unreachable, it is unrecoverable: a press marks the relay due, so lifting to try
+again from higher up hands off instead. The user would get one attempt per relay,
+its success decided by where their thumb happened to land, and the ring would
+answer the drag, stall part closed, and read as a broken app.
+
+The travel belongs to **one** finger, named by its `UITouch`. `UIEvent` delivers
+touches in an unordered `Set`, so without an identity a second finger resting on
+the glass has its position measured against the first finger's origin: the
+distance between two thumbs, read as a drag nobody made, pinning the cover with
+no travel at all. For the same reason a lift is only a lift when it is the last
+one — letting go of the passenger used to wipe the origin and unwind the ring
+under a thumb that had not moved.
+
+A **pause** sits at the centre once a finger is down, and stays after the pin.
+Not a padlock: a padlock says you cannot leave, which is false, since a tap, a
+drag sideways and the button all still work. A pause says nothing happens until
+you say so, which is what is actually true, and it is the same word the frozen
+ring is already saying.
+
+A padlock glyph inside a ring failed twice before this, both times drawn into a
+bare `CALayer` positioned under the finger. The pause renders because the badge
+is an ordinary `UIView` at a fixed place in the hierarchy, with the glyph in a
+`UIImageView` (see "SF Symbols in a UIImageView" below for the other half of
+why).
 
 ## Touches on the cover
 
@@ -524,8 +604,28 @@ screen still owned it, and surfaces only once it moves.
 
 **`CoverWindow.sendEvent`** is the same finger when it does not move at all.
 `UIEvent.allTouches` carries touches in the `.stationary` phase, which produce
-no view callbacks whatsoever. Without this the stationary-finger case could
-hold the cover but never draw a ring, so it could never pin anything.
+no view callbacks whatsoever. Without this the stationary-finger case could hold
+the cover but never freeze the badge, so it could never pin anything.
+
+There is a fourth listener, on the app's **own** window rather than the cover's:
+a zero-duration `UILongPressGestureRecognizer` for the stretch where the overlay
+is being drawn but is not necessarily the window UIKit routes the touch to.
+
+### Every route must say both halves
+
+All four speak to two pieces of state, the gate and the badge, and **a route
+that tells one and not the other is a bug every time.** Two of them shipped that
+way and both were caught in review rather than on the device.
+
+`sendEvent` called `fingerLanded` on the way down and only `gate.release` on the
+way up, and the host-window recogniser spoke to the gate alone. The failures do
+not look alike, which is the point: the first strands a hold flag set forever,
+so the badge and the pin quietly stop working for the life of the process; the
+second lets the ring drain past zero while the handoff is held back, a cover
+sitting still with nothing on screen admitting why.
+
+The state has no owner that can enforce this, so the rule has to be read. If you
+add a touch route, it says both halves or it says nothing.
 
 ### Recognisers cancel touches, and the window outlives the relay
 

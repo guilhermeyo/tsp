@@ -1,7 +1,8 @@
 import UIKit
 
-/// Every pixel the cover draws: the line, the controls that appear once it is
-/// pinned or missed, the padlock, and the picture you can share.
+/// Every pixel the cover draws: the line, the badge that counts it down, the
+/// controls that appear once it is pinned or missed, and the picture you can
+/// share.
 ///
 /// Split from `QuoteScreen` so that file is about WHEN the cover exists and
 /// this one about what it looks like. A constraint has no business sitting next
@@ -11,25 +12,258 @@ import UIKit
 /// and selectors arrive as arguments. That is the seam. `QuoteScreen` decides
 /// behaviour, this decides appearance.
 enum CoverChrome {
-  /// The padlock, opposite the copy and share controls, saying the cover is
-  /// pinned rather than merely slow.
-  static func addPadlock(to container: UIView, config: QuoteCatalog.Config) {
-    let colour: UIColor = config.isDark ? .white : .black
-    let symbol = UIImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-    // Coloured into the image rather than left to `tintColor`, which a plain
-    // UIImageView only honours for a template image. See `docs/native-notes.md`,
-    // "SF Symbols in a UIImageView".
-    let glyph = UIImage(systemName: "lock.fill", withConfiguration: symbol)?
-      .withTintColor(colour.withAlphaComponent(0.4), renderingMode: .alwaysOriginal)
-    let lock = UIImageView(image: glyph)
-    lock.alpha = 0
-    lock.translatesAutoresizingMaskIntoConstraints = false
-    container.addSubview(lock)
+  /// The countdown at the top of the cover: how long the phrase has left, and
+  /// what a finger is doing about it.
+  ///
+  /// One ring with three things to say, in sequence and never at once, which is
+  /// what lets it carry two opposite meanings without ambiguity:
+  ///
+  /// - **Draining.** The ring empties over the configured duration with the
+  ///   seconds left written inside it. Time leaving, nobody doing anything.
+  /// - **Held.** It freezes where the eye last saw it and the number gives way
+  ///   to a pause. Time stopped, and it stays stopped for as long as the finger
+  ///   is down. Nothing is being committed to yet.
+  /// - **Closing.** Drag down and a second ring fills with the DISTANCE the
+  ///   finger has travelled, thickening as it goes. It is a ruler, not a clock:
+  ///   drag back up and it unwinds. Whole means pinned.
+  /// - **Pinned.** Both rings go and the pause stays.
+  ///
+  /// BOTH RINGS SWEEP CLOCKWISE. Draining is the natural place to get that
+  /// wrong: animating `strokeEnd` down from whole retracts the arc's leading
+  /// edge ANTICLOCKWISE, which against a pin that fills clockwise reads as two
+  /// unrelated animations arguing. `strokeStart` up from nothing eats the ring
+  /// away from the same end the pin grows from, so both boundaries travel the
+  /// same way and the second gesture looks like it continues the first.
+  ///
+  /// No disc behind it. The ring and the number are the whole of it, over the
+  /// cover's own colour.
+  ///
+  /// Pause and not a padlock, deliberately. A padlock says you cannot leave,
+  /// which is false: a tap, a drag sideways and the button all still work. A
+  /// pause says nothing happens until you say so, which is what is actually
+  /// true, and it is the same word the frozen ring is already saying.
+  ///
+  /// Takes no touches. It sits over the cover, and the cover is the thing
+  /// listening for a finger.
+  final class Badge: UIView {
+    private static let ringRadius: CGFloat = 25
+    /// Everything inside is laid out against this ONCE, at init: the ring's
+    /// centre, the number's frame and the pause's centre. `addBadge` constrains
+    /// the view to the same number, so the two must not drift apart.
+    fileprivate static let side: CGFloat = 58
+    private static let thin: CGFloat = 2
+    private static let thick: CGFloat = 3.5
+
+    /// The faint outline the two rings run along.
+    private let track = CAShapeLayer()
+    /// The countdown: starts whole, is eaten away clockwise.
+    private let countdown = CAShapeLayer()
+    /// The pin: starts at nothing, fills clockwise.
+    private let pin = CAShapeLayer()
+    private let pause = UIImageView()
+    private let number = UILabel()
+
+    /// When the countdown reaches nothing, on the same clock CoreAnimation uses.
+    private var endsAt: CFTimeInterval = 0
+    private var ticker: CADisplayLink?
+    private let separator = Locale.current.decimalSeparator ?? "."
+
+    init(config: QuoteCatalog.Config) {
+      super.init(frame: CGRect(x: 0, y: 0, width: Self.side, height: Self.side))
+      isUserInteractionEnabled = false
+
+      let colour: UIColor = config.isDark ? .white : .black
+      let centre = CGPoint(x: Self.side / 2, y: Self.side / 2)
+
+      let circle = UIBezierPath(arcCenter: centre, radius: Self.ringRadius,
+                                startAngle: -.pi / 2, endAngle: 1.5 * .pi,
+                                clockwise: true).cgPath
+      let rings: [(CAShapeLayer, CGFloat, CGFloat)] = [
+        (track, 0.10, 1), (countdown, 0.30, 1), (pin, 0.75, 0),
+      ]
+      for (layer, alpha, end) in rings {
+        layer.frame = bounds
+        layer.path = circle
+        layer.fillColor = UIColor.clear.cgColor
+        layer.strokeColor = colour.withAlphaComponent(alpha).cgColor
+        layer.lineWidth = Self.thin
+        layer.lineCap = .round
+        layer.strokeEnd = end
+        self.layer.addSublayer(layer)
+      }
+
+      number.font = font(for: config, size: 14)
+      number.textColor = colour.withAlphaComponent(0.75)
+      number.textAlignment = .center
+      number.frame = bounds
+      // The full duration, standing still, which is what the snapshot carries
+      // for the stretch before the app is drawing. Instant has nothing to count.
+      number.text = config.holdSeconds > 0 ? text(config.holdSeconds) : nil
+      addSubview(number)
+
+      let symbol = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+      // Coloured into the image rather than left to `tintColor`, which a plain
+      // UIImageView only honours for a template image. See `docs/native-notes.md`,
+      // "SF Symbols in a UIImageView".
+      pause.image = UIImage(systemName: "pause.fill", withConfiguration: symbol)?
+        .withTintColor(colour.withAlphaComponent(0.75), renderingMode: .alwaysOriginal)
+      pause.sizeToFit()
+      pause.center = centre
+      pause.alpha = 0
+      addSubview(pause)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+    deinit { ticker?.invalidate() }
+
+    /// The phrase's own clock has started. Called when the cover becomes
+    /// touchable, not when the relay began: see `docs/native-notes.md`,
+    /// "A countdown that cannot lie".
+    func drain(over seconds: TimeInterval) {
+      guard seconds > 0 else { return }
+      countdown.removeAnimation(forKey: "sweep")
+      // Model value at the destination, so it simply stays there when the
+      // animation ends rather than needing to be kept alive past its own life.
+      countdown.strokeStart = 1
+      let sweep = CABasicAnimation(keyPath: "strokeStart")
+      sweep.fromValue = 0
+      sweep.toValue = 1
+      sweep.duration = seconds
+      // Linear, because it is a clock. Any easing here would be the ring
+      // disagreeing with the timer it is drawing.
+      sweep.timingFunction = CAMediaTimingFunction(name: .linear)
+      countdown.add(sweep, forKey: "sweep")
+
+      endsAt = CACurrentMediaTime() + seconds
+      showRemaining()
+      let link = CADisplayLink(target: Ticker(self), selector: #selector(Ticker.tick))
+      link.add(to: .main, forMode: .common)
+      ticker = link
+    }
+
+    /// A finger arrived. Freeze, and wait to see whether it means anything by
+    /// it. Nothing starts closing here: the pin is driven by the drag.
+    func hold() {
+      stopTicking()
+      // Where the eye last saw it, not where the model says. Mid-animation the
+      // two are a whole countdown apart. Removing the sweep is unconditional:
+      // leaving it running whenever `presentation` came back nil would let the
+      // ring carry on emptying behind a pause that says it stopped.
+      let shown = countdown.presentation()?.strokeStart ?? countdown.strokeStart
+      countdown.removeAnimation(forKey: "sweep")
+      countdown.strokeStart = shown
+      // A crossfade rather than a cut: the pin starts at nothing, so cutting
+      // the countdown would leave the badge ringless for the first moments of
+      // the very gesture it is meant to be reporting.
+      let handover = CABasicAnimation(keyPath: "opacity")
+      handover.fromValue = 1
+      handover.toValue = 0
+      handover.duration = 0.15
+      countdown.opacity = 0
+      countdown.add(handover, forKey: "handover")
+
+      pause.alpha = 0
+      UIView.animate(withDuration: 0.18) {
+        self.pause.alpha = 1
+        self.number.alpha = 0
+      }
+
+      pinProgress(0)
+    }
+
+    /// How far down the drag has got, from nothing to whole.
+    ///
+    /// Set outright with implicit animation off, because the ring is tracking a
+    /// finger. CoreAnimation's default quarter-second fade on a layer property
+    /// would put the ring a quarter of a second behind the thumb drawing it,
+    /// which is the difference between a control and a progress bar.
+    func pinProgress(_ fraction: CGFloat) {
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      pin.strokeEnd = fraction
+      pin.lineWidth = Self.thin + (Self.thick - Self.thin) * fraction
+      CATransaction.commit()
+    }
+
+    /// The finger left before the pin closed. Neither the ring nor the number is
+    /// set going again: a press hands off the moment it lifts, so the cover is
+    /// already on its way out and a clock starting to move would be describing
+    /// time nobody is going to spend.
+    func releaseHold() {
+      pinProgress(0)
+      countdown.removeAnimation(forKey: "handover")
+      countdown.opacity = 1
+      pause.alpha = 0
+      number.alpha = 1
+    }
+
+    /// Pinned. The rings have nothing left to count, so they go and leave the
+    /// pause holding the state on its own.
+    func pinned() {
+      stopTicking()
+      // Whole, and held whole for the length of the fade. Snapping it back to
+      // nothing would undraw the ring at the exact instant it earned its point.
+      pinProgress(1)
+      countdown.opacity = 0
+
+      let fade = CABasicAnimation(keyPath: "opacity")
+      fade.fromValue = 1
+      fade.toValue = 0
+      fade.duration = 0.3
+      for layer in [track, pin] {
+        layer.opacity = 0
+        layer.add(fade, forKey: "retire")
+      }
+      pause.alpha = 1
+      number.alpha = 0
+    }
+
+    fileprivate func showRemaining() {
+      let left = max(0, endsAt - CACurrentMediaTime())
+      // Only when the rendered string actually changes. At one decimal that is
+      // ten writes a second rather than sixty, without asking the display link
+      // for a frame rate the platform may or may not honour.
+      let next = text(left)
+      if number.text != next { number.text = next }
+      if left <= 0 { stopTicking() }
+    }
+
+    private func stopTicking() {
+      ticker?.invalidate()
+      ticker = nil
+    }
+
+    /// A comma where a comma belongs. `String(format:)` writes the C locale.
+    private func text(_ seconds: TimeInterval) -> String {
+      String(format: "%.1f", seconds).replacingOccurrences(of: ".", with: separator)
+    }
+
+    /// `CADisplayLink` retains its target, so the badge cannot be its own: the
+    /// runloop would keep it alive and `deinit`, the only place the link is
+    /// invalidated, would never run.
+    private final class Ticker: NSObject {
+      private weak var badge: Badge?
+      init(_ badge: Badge) { self.badge = badge }
+      @objc func tick() { badge?.showRemaining() }
+    }
+  }
+
+  /// The badge, centred at the top, on the same line as the copy and share
+  /// controls and as the system's own back breadcrumb.
+  @discardableResult
+  static func addBadge(to container: UIView, config: QuoteCatalog.Config) -> Badge {
+    let badge = Badge(config: config)
+    badge.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(badge)
     NSLayoutConstraint.activate([
-      lock.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 30),
-      lock.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 22),
+      badge.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+      badge.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 2),
+      badge.widthAnchor.constraint(equalToConstant: Badge.side),
+      badge.heightAnchor.constraint(equalToConstant: Badge.side),
     ])
-    UIView.animate(withDuration: 0.28) { lock.alpha = 1 }
+    return badge
   }
 
   /// The line as a picture, without any of the card's furniture.
@@ -150,6 +384,13 @@ enum CoverChrome {
     return tally
   }
 
+  /// Paints `container` as the cover, and hands back the stack holding the line
+  /// so a caller can hang the badge and the card's chrome off the bottom of it.
+  /// Nil means no phrase -- deliberately still a plain themed field, because
+  /// that is not the app list.
+  ///
+  /// `cardImage` wants the painting and not the stack, hence discardable.
+  @discardableResult
   static func fill(_ container: UIView, config: QuoteCatalog.Config, phrase: QuoteCatalog.Quote?) -> UIStackView? {
     let background: UIColor = config.isDark ? .black : .white
     container.backgroundColor = background
