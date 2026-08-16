@@ -1,7 +1,8 @@
 import UIKit
 
-/// Every pixel the cover draws: the line, the controls that appear once it is
-/// pinned or missed, the padlock, and the picture you can share.
+/// Every pixel the cover draws: the line, the badge that counts it down, the
+/// controls that appear once it is pinned or missed, and the picture you can
+/// share.
 ///
 /// Split from `QuoteScreen` so that file is about WHEN the cover exists and
 /// this one about what it looks like. A constraint has no business sitting next

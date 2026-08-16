@@ -145,6 +145,8 @@ enum QuoteScreen {
     relayInFlight = true
     relayPhrase = nil
     clearCoverGestures()
+    // A hold belongs to the cover it was made on. See `forgetHold`.
+    forgetHold()
     // A card still owed when a new relay starts was never collected: the user
     // launched something else instead of tapping the breadcrumb, so that line
     // is one they chose not to read.
@@ -476,14 +478,37 @@ enum QuoteScreen {
 
   /// The finger left before the ring closed.
   private static func fingerLeft() {
-    lockWork?.cancel()
-    lockWork = nil
-    guard isHolding else { return }
-    isHolding = false
+    let wasHolding = isHolding
+    forgetHold()
     // A pin outlives the finger that made it. Without this, lifting off a cover
     // that has just been pinned would wind the badge back to counting.
-    guard !gate.locked else { return }
+    guard wasHolding, !gate.locked else { return }
     badge?.releaseHold()
+  }
+
+  /// Everything the hold owns, put back to nothing, with no view involved.
+  ///
+  /// Separate from `fingerLeft` because A RELAY BOUNDARY IS NOT A FINGER
+  /// LIFTING: there may be no finger left to lift. Pin the cover, then swipe
+  /// home. `dismiss` refuses to run for the whole length of a relay and a pinned
+  /// cover is a relay still in flight, so nothing tears anything down; and the
+  /// finger that made the pin can lift without `CoverView` ever hearing it,
+  /// because a touch that began during the app-switch animation is delivered to
+  /// this app through `sendEvent` alone and never gets a `began` on the view to
+  /// be the end of.
+  ///
+  /// `isHolding` would then stay true for the life of the process, and it is a
+  /// guard on both `fingerLanded` and `startCountdown`: no buzz, no pause, no
+  /// pin and no countdown, ever again. `lockWork` would survive too and pin the
+  /// NEXT cover 1.2 seconds in with nobody touching it.
+  ///
+  /// This is `RelayGate.arm` refusing to inherit the previous cover's pin and
+  /// finger, which is the same rule and was learned the same way. The gate can
+  /// only clear its own state; this clears the half that lives up here.
+  private static func forgetHold() {
+    lockWork?.cancel()
+    lockWork = nil
+    isHolding = false
   }
 
   /// The finger held long enough. From here nothing leaves on its own.
@@ -913,6 +938,9 @@ enum QuoteScreen {
         QuoteScreen.fingerLanded()
       } else {
         QuoteScreen.gate.release()
+        // Symmetrically, and for the same reason: the finger this route exists
+        // to hear is one `CoverView` never gets a `touchesEnded` for either.
+        QuoteScreen.fingerLeft()
       }
     }
   }
@@ -1013,11 +1041,18 @@ enum QuoteScreen {
       // Only while a cover is actually up. Outside a relay this window is the
       // ordinary app and a tap on it means nothing to the gate.
       guard QuoteScreen.window != nil else { return }
+      // The badge hears this route too. It is the only one that used to speak
+      // to the gate and to nothing else, and the countdown made that asymmetry
+      // visible: a finger seen only here held the handoff back while the ring
+      // carried on emptying, so the cover sat past zero with nothing leaving
+      // and nothing on screen admitting why.
       switch recognizer.state {
       case .began, .changed:
         QuoteScreen.gate.press()
+        QuoteScreen.fingerLanded()
       case .ended, .cancelled, .failed:
         QuoteScreen.gate.release()
+        QuoteScreen.fingerLeft()
       default:
         break
       }
