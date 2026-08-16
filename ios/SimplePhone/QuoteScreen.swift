@@ -173,6 +173,7 @@ enum QuoteScreen {
     // Launching something supersedes whatever the last relay was interrupted
     // in the middle of: this IS the user choosing, and they chose this instead.
     suspension.clear()
+    isShowingCard = false
     // A card still owed when a new relay starts was never collected: the user
     // launched something else instead of tapping the breadcrumb, so that line
     // is one they chose not to read.
@@ -195,6 +196,11 @@ enum QuoteScreen {
   /// as the process, and repainting the cover blank would be worse than
   /// repainting it the same.
   private static func keptQuote(_ config: QuoteCatalog.Config) -> QuoteCatalog.Quote? {
+    // The off switch, honoured here as everywhere else. `roll`, `restoreOrRoll`
+    // and `countAsShown` all refuse when Phrases is off; keeping a line that was
+    // already on screen was the one path that did not, so switching it off left
+    // the last phrase painted into every snapshot after it.
+    guard config.enabled else { return nil }
     guard let text = relayPhrase ?? QuoteCatalog.loadStats().current else { return nil }
     return config.items.first { $0.text == text }
   }
@@ -310,6 +316,18 @@ enum QuoteScreen {
                              secondsLeft: remainingCountdown(),
                              total: countdownTotal,
                              at: Date().timeIntervalSince1970)
+    } else if isShowingCard, let phrase = cardPhrase?.text {
+      // THE CARD NEEDS THE SAME MERCY, by the same reasoning and against the
+      // same interruptions. Putting it up consumed the offer, so a backgrounding
+      // from a card looked exactly like one from the app list: the exit rolled
+      // a new phrase and the next activation found nothing owed and tore the
+      // card down. The user locked their phone reading a line and came back to
+      // a different one.
+      //
+      // Owed again rather than suspended, because the card already has a
+      // mechanism for being owed and `activate` already knows how to serve it.
+      pendingReturn.handedOff(phrase: phrase, target: resumeTarget,
+                              at: Date().timeIntervalSince1970)
     }
     relayInFlight = false
     // Every route that reports a finger stops at `relayInFlight`, so a finger
@@ -416,6 +434,7 @@ enum QuoteScreen {
     fingerLeft()
     cardPhrase = nil
     resumeTarget = nil
+    isShowingCard = false
     // The cover this relay belonged to is gone, so there is nothing left to put
     // anyone back into. `activate` has already consumed the offer by now; this
     // is what stops one surviving any OTHER way the cover comes down.
@@ -460,6 +479,7 @@ enum QuoteScreen {
   private static func presentCard(_ missed: RelayReturn.Missed) {
     let text = missed.phrase
     resumeTarget = missed.target
+    isShowingCard = true
     guard let overlay = window, let root = overlay.rootViewController?.view else { return }
     // A touch on the card is not a touch on a relay. Without this the press
     // that dismisses it would leave the gate holding, and the NEXT relay would
@@ -472,6 +492,14 @@ enum QuoteScreen {
     clearCoverGestures()
 
     let config = QuoteCatalog.loadConfig()
+    // Switched off between the handoff and the return. Offering the line back
+    // now would be the off switch failing to be off, on the one screen whose
+    // whole purpose is to show a phrase.
+    guard config.enabled else {
+      isShowingCard = false
+      dismiss()
+      return
+    }
     let author = config.items.first { $0.text == text }?.author
     let count = QuoteCatalog.loadStats().counts[text] ?? 0
 
@@ -490,13 +518,10 @@ enum QuoteScreen {
     // where I was going. Here that is the app the user just came BACK from,
     // which is why the destination had to be remembered alongside the line.
     //
-    // Swipe only, and no tap. On a pinned cover a tap is someone mid-launch
-    // carrying on; on this card it would be someone who deliberately came back
-    // being thrown out again by a stray touch.
     // A PAN and not a swipe. `UISwipeGestureRecognizer` wants a flick: a
-    // deliberate, unhurried drag to the right never reaches its velocity
-    // threshold and is silently ignored, which is exactly what a person doing
-    // what the feature describes would do.
+    // deliberate, unhurried drag never reaches its velocity threshold and is
+    // silently ignored, which is exactly what a person doing what the feature
+    // describes would do. It is also the only kind that can drive a ring.
     // Only when there is somewhere to go. A badge that answers a drag leading
     // nowhere is an offer the card cannot keep.
     if resumeTarget != nil {
@@ -513,6 +538,11 @@ enum QuoteScreen {
 
   /// Where the user was going when the phrase got away from them.
   private static var resumeTarget: URL?
+
+  /// The return card is what is on screen right now. Consuming the offer is
+  /// what puts it up, so without this nothing downstream can tell a card from
+  /// the app list.
+  private static var isShowingCard = false
 
   /// Back to the app they came from, from the card.
   ///
@@ -538,10 +568,11 @@ enum QuoteScreen {
     case .ended:
       let promised = exitDrag.promise
       exitDrag.end()
-      guard promised == .skipping else {
-        badge.quiet()
-        return
-      }
+      // Whatever the drag asked for, it is over: the badge goes back to being
+      // invisible. Leaving it whole on the way out left a card sitting behind a
+      // full ring and a forward arrow describing a gesture nothing would answer.
+      badge.quiet()
+      guard promised == .skipping else { return }
     default:
       exitDrag.end()
       badge.quiet()
@@ -550,19 +581,36 @@ enum QuoteScreen {
 
     guard let target = resumeTarget else { return }
     resumeTarget = nil
-    UIApplication.shared.open(target, options: [:]) { ok in
-      // RE-ARM, and this is the part that was missing. Resuming opens the
-      // target directly instead of going through the relay, so nothing
-      // recorded that a phrase was owed again: the second time the user came
-      // back, the cover found nothing pending and fell through to the list.
-      //
-      // If a line is worth coming back to once it is worth coming back to
-      // twice. Bouncing keeps working for as long as the user keeps bouncing,
-      // and the two minute window still ends it once they settle into the
-      // other app.
-      guard ok, let phrase = cardPhrase?.text else { return }
+
+    // RE-ARMED BEFORE THE OPEN, not in its completion. Resuming goes straight
+    // to the target instead of through the relay, so nothing else records that
+    // a phrase is owed again -- and the second time the user came back, the
+    // cover found nothing pending and fell through to the list.
+    //
+    // If a line is worth coming back to once it is worth coming back to twice.
+    // Bouncing keeps working for as long as the user keeps bouncing, and the
+    // two minute window still ends it once they settle into the other app.
+    //
+    // The ORDER is the part that took an audit to see. `didEnterBackground`
+    // reads `pendingReturn.isPending` to decide whether the exit keeps this
+    // line or rolls a new one, and the open's completion is asynchronous: on a
+    // target that cold-starts slowly the backgrounding won that race, painted a
+    // different phrase into the snapshot, and the user watched the line change
+    // under them on the way back. Every other handoff records first for the
+    // same reason -- see `scheduleOpen`.
+    if let phrase = cardPhrase?.text {
       pendingReturn.handedOff(phrase: phrase, target: target,
                               at: Date().timeIntervalSince1970)
+    }
+
+    UIApplication.shared.open(target, options: [:]) { ok in
+      guard !ok else { return }
+      // Nothing happened, so nothing may be left changed. Without putting the
+      // target back, the guard at the top of this function rejected every later
+      // drag: one refusal and the card's only way out was gone for good, with
+      // no alert and no explanation.
+      pendingReturn.clear()
+      resumeTarget = target
     }
   }
 
@@ -809,12 +857,10 @@ enum QuoteScreen {
     dismiss()
   }
 
-  /// A tap on the pinned cover, or a drag to the right: go where the widget row
-  /// was pointing all along.
+  /// A sideways drag on the pinned cover: go where the widget row was pointing
+  /// all along.
   ///
-  /// A tap that lands on one of the controls is not this. `copy`, `share` and
-  /// the button all sit in front and would otherwise be unreachable, since the
-  /// recogniser is on the view behind them.
+  /// The tap that used to do this as well is gone. See `engageLock`.
   fileprivate static func proceedFromLock(_ recognizer: UIGestureRecognizer) {
     guard gate.locked, let pan = recognizer as? UIPanGestureRecognizer,
           let badge else { return }
@@ -1236,7 +1282,12 @@ enum QuoteScreen {
         // Symmetrically, and for the same reason: the finger this route exists
         // to hear is one `CoverView` never gets a `touchesEnded` for either.
         // Nil, because this branch means every finger is off the glass.
-        QuoteScreen.fingerLeft()
+        //
+        // And it is the ONE route that can see a finger the view cannot, so a
+        // cancellation reaching only here would otherwise be read as a decision:
+        // a call arriving mid-drag pinned the cover or launched the target.
+        let taken = touches.contains { $0.phase == .cancelled }
+        QuoteScreen.fingerLeft(cancelled: taken)
       }
     }
   }

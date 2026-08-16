@@ -49,7 +49,7 @@ enum CoverChrome {
   /// cover's own colour.
   ///
   /// Pause and not a padlock, deliberately. A padlock says you cannot leave,
-  /// which is false: a tap, a drag sideways and the button all still work. A
+  /// which is false: a drag sideways and the button both still work. A
   /// pause says nothing happens until you say so, which is what is actually
   /// true, and it is the same word the frozen ring is already saying.
   ///
@@ -154,7 +154,19 @@ enum CoverChrome {
       // stop it: `stopTicking` only ever holds the newest.
       stopTicking()
       countdown.removeAnimation(forKey: "sweep")
-      countdown.opacity = 1
+      // ALL THREE, because this badge may have been left in the pinned or the
+      // quiet state: a warm relay reuses whatever cover it finds, and a cover
+      // that was pinned still carries the badge that pin retired. Restoring
+      // only the countdown left it sweeping with no track behind it and a pause
+      // still showing over a relay that was plainly counting.
+      for layer in [track, countdown] {
+        layer.removeAnimation(forKey: "retire")
+        layer.opacity = 1
+      }
+      pin.removeAnimation(forKey: "retire")
+      pin.opacity = 1
+      pin.strokeEnd = 0
+      pin.lineWidth = Self.thin
       number.alpha = 1
       skipping = false
       pause.alpha = 0
@@ -262,10 +274,14 @@ enum CoverChrome {
       CATransaction.commit()
     }
 
-    /// The finger left before the pin closed. Neither the ring nor the number is
-    /// set going again: a press hands off the moment it lifts, so the cover is
-    /// already on its way out and a clock starting to move would be describing
-    /// time nobody is going to spend.
+    /// The finger left having asked for nothing, so the badge goes back to
+    /// counting: rings back to where they were, number back in place of the
+    /// pause, pin ring emptied.
+    ///
+    /// The doc here used to say the opposite -- that nothing is set going again,
+    /// because lifting hands off. That stopped being true when a press stopped
+    /// being a commitment. `QuoteScreen.resumeAfterHold` restarts the clock this
+    /// is drawing.
     func releaseHold() {
       pinProgress(0)
       countdown.removeAnimation(forKey: "handover")

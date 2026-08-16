@@ -679,8 +679,8 @@ one — letting go of the passenger used to wipe the origin and unwind the ring
 under a thumb that had not moved.
 
 A **pause** sits at the centre once a finger is down, and stays after the pin.
-Not a padlock: a padlock says you cannot leave, which is false, since a tap, a
-drag sideways and the button all still work. A pause says nothing happens until
+Not a padlock: a padlock says you cannot leave, which is false, since a drag
+sideways and the button both still work. A pause says nothing happens until
 you say so, which is what is actually true, and it is the same word the frozen
 ring is already saying.
 
