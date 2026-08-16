@@ -528,11 +528,39 @@ legible without a word of explanation: **a ring that is moving is a cover that
 can be caught.** Before it moves, nothing is reachable and nothing is counting,
 so there is nothing on screen making a promise the platform will not keep.
 
-One ring carries two opposite meanings, which works only because they never
-happen at once. It **drains** over the configured duration: time leaving, nobody
-doing anything. Under a finger it freezes where the eye last saw it and a second
-ring **fills** the other way toward the pin, thickening as it closes: time
-stopped, someone building something.
+Both boundaries sweep **clockwise**, and draining is the natural place to get
+that wrong. Animating `strokeEnd` down from whole retracts the arc's leading edge
+anticlockwise, which against a pin that fills clockwise reads as two unrelated
+animations arguing with each other. `strokeStart` up from nothing eats the ring
+away from the same end the pin grows from, so the second gesture looks like it
+continues the first.
+
+## Hold to read, drag to keep
+
+The pin is driven by DISTANCE, not by time. Resting a finger pauses the cover,
+for as long as you like, and commits to nothing. Dragging down closes the pin
+ring in proportion to how far the finger has travelled; dragging back up opens
+it again; whole means pinned.
+
+It was a 1.2 second hold first, and the reason it changed is the dead window
+above. A timed hold asks the user to commit before they know whether they were
+heard: a press that never arrived cost them the entire wait before anything told
+them so. A drag answers in the first millimetre, because the ring is following
+the thumb rather than a clock.
+
+It also separates two intentions that a timeout had to guess between. Wanting to
+finish reading and wanting to keep the line are different things, and neither is
+now a timeout on the other.
+
+The travel is measured from where the finger was first **seen**, not from where
+it landed — on a warm relay those are not the same point, since the first
+stretch of the touch belonged to the home screen. Seen is the honest baseline
+and it is the one the user's eye agrees with, because the ring starts moving
+from that same instant.
+
+Only the vertical component counts. Sideways already means something on a cover
+that is pinned, and asking one axis to answer two questions is how a thumb's
+natural arc ends up deciding for the user.
 
 A **pause** sits at the centre once a finger is down, and stays after the pin.
 Not a padlock: a padlock says you cannot leave, which is false, since a tap, a

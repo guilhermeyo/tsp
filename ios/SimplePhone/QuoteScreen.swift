@@ -420,12 +420,21 @@ enum QuoteScreen {
 
   // MARK: - Pinning the cover on purpose
 
-  /// How long a finger has to stay down before the cover is pinned.
+  /// How far down a finger has to travel to pin the cover.
   ///
-  /// Long enough that nobody trips it while reaching for the screen, short
-  /// enough that it does not feel like a punishment. Being able to WATCH it
-  /// fill is what makes the number tolerable.
-  private static let lockDuration: TimeInterval = 1.2
+  /// A ruler and not a clock, and the difference is worth the change. A timed
+  /// hold makes the user commit before they know whether they were heard: iOS
+  /// delivers nothing to this app for the first ~420ms of a relay, so a press
+  /// that never arrived cost them the whole wait before they found out. A drag
+  /// answers in the first millimetre, because the ring is following the thumb.
+  ///
+  /// It also splits the two intentions cleanly. Resting a finger PAUSES, for as
+  /// long as you like, and commits to nothing. Dragging KEEPS. Neither is a
+  /// timeout on the other.
+  ///
+  /// Long enough that nobody pins the cover reaching for the screen, short
+  /// enough for one thumb travel.
+  private static let pinTravel: CGFloat = 120
 
   /// The badge on the live cover.
   ///
@@ -439,7 +448,12 @@ enum QuoteScreen {
   /// state for pinned.
   private static var isHolding = false
 
-  private static var lockWork: DispatchWorkItem?
+  /// Where the finger was first SEEN, which on a warm relay is not where it
+  /// landed: the first ~420ms of the touch belong to the home screen. Measuring
+  /// from here rather than from an origin nobody observed is the honest
+  /// baseline, and it is the one the user's eye agrees with, because the ring
+  /// starts moving from the same instant.
+  private static var holdOrigin: CGPoint = .zero
 
   /// The phrase's own clock, started at the moment the cover becomes touchable
   /// rather than at the moment the relay began. Why they are different, and why
@@ -462,18 +476,29 @@ enum QuoteScreen {
   ///
   /// No badge means no phrase on the cover -- Phrases switched off, or an empty
   /// list -- and there is nothing to hold a blank rectangle for.
-  fileprivate static func fingerLanded() {
+  fileprivate static func fingerLanded(at point: CGPoint) {
     guard relayInFlight, !gate.locked, !isHolding, let badge else { return }
     isHolding = true
+    holdOrigin = point
 
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-    badge.hold(over: lockDuration)
+    badge.hold()
+  }
 
-    // The animation is the picture; this is the fact. Kept separate so a
-    // dropped frame cannot decide whether the cover is pinned.
-    let work = DispatchWorkItem { engageLock() }
-    lockWork = work
-    DispatchQueue.main.asyncAfter(deadline: .now() + lockDuration, execute: work)
+  /// The finger is dragging. Downward travel closes the pin; coming back up
+  /// opens it again, which is how someone backs out of a gesture they started
+  /// by accident.
+  ///
+  /// Only the vertical component counts. Sideways means something on a cover
+  /// that is already pinned, and asking one axis to answer two questions is how
+  /// a thumb's natural arc ends up choosing for the user.
+  fileprivate static func fingerMoved(to point: CGPoint) {
+    guard isHolding, !gate.locked, let badge else { return }
+    let travelled = (point.y - holdOrigin.y) / pinTravel
+    let closed = min(max(travelled, 0), 1)
+    badge.pinProgress(closed)
+    guard closed >= 1 else { return }
+    engageLock()
   }
 
   /// The finger left before the ring closed.
@@ -499,19 +524,17 @@ enum QuoteScreen {
   ///
   /// `isHolding` would then stay true for the life of the process, and it is a
   /// guard on both `fingerLanded` and `startCountdown`: no buzz, no pause, no
-  /// pin and no countdown, ever again. `lockWork` would survive too and pin the
-  /// NEXT cover 1.2 seconds in with nobody touching it.
+  /// pin and no countdown, ever again.
   ///
   /// This is `RelayGate.arm` refusing to inherit the previous cover's pin and
   /// finger, which is the same rule and was learned the same way. The gate can
   /// only clear its own state; this clears the half that lives up here.
   private static func forgetHold() {
-    lockWork?.cancel()
-    lockWork = nil
     isHolding = false
+    holdOrigin = .zero
   }
 
-  /// The finger held long enough. From here nothing leaves on its own.
+  /// The drag went the distance. From here nothing leaves on its own.
   private static func engageLock() {
     guard relayInFlight, !gate.locked, let root = window?.rootViewController?.view else { return }
     gate.lock()
@@ -519,7 +542,6 @@ enum QuoteScreen {
     if let text = relayPhrase {
       cardPhrase = QuoteCatalog.Quote(text: text, author: QuoteCatalog.loadConfig().items.first { $0.text == text }?.author)
     }
-    lockWork = nil
 
     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
@@ -934,8 +956,14 @@ enum QuoteScreen {
         QuoteScreen.gate.press()
         // Also here, because this is the ONLY place a finger that landed during
         // the app-switch animation is seen: it produces no `touchesBegan` on
-        // the view, having begun while the home screen still owned it.
-        QuoteScreen.fingerLanded()
+        // the view, having begun while the home screen still owned it. Its DRAG
+        // is invisible to the view for the same reason, so the pin has to be
+        // driven from here too.
+        if let touch = touches.first(where: { $0.phase != .ended && $0.phase != .cancelled }) {
+          let point = touch.location(in: rootViewController?.view)
+          QuoteScreen.fingerLanded(at: point)
+          QuoteScreen.fingerMoved(to: point)
+        }
       } else {
         QuoteScreen.gate.release()
         // Symmetrically, and for the same reason: the finger this route exists
@@ -960,7 +988,7 @@ enum QuoteScreen {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesBegan(touches, with: event)
       QuoteScreen.gate.press()
-      QuoteScreen.fingerLanded()
+      if let point = touches.first?.location(in: self) { QuoteScreen.fingerLanded(at: point) }
     }
 
     /// A finger that was ALREADY DOWN when the cover became touchable.
@@ -980,8 +1008,11 @@ enum QuoteScreen {
       super.touchesMoved(touches, with: event)
       QuoteScreen.gate.press()
       // The finger that landed during the animation has no `began` here.
-      // `fingerLanded` ignores repeats.
-      QuoteScreen.fingerLanded()
+      // `fingerLanded` ignores repeats, so this both adopts that finger and
+      // reports the ordinary drag.
+      guard let point = touches.first?.location(in: self) else { return }
+      QuoteScreen.fingerLanded(at: point)
+      QuoteScreen.fingerMoved(to: point)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -1049,7 +1080,9 @@ enum QuoteScreen {
       switch recognizer.state {
       case .began, .changed:
         QuoteScreen.gate.press()
-        QuoteScreen.fingerLanded()
+        let point = recognizer.location(in: recognizer.view)
+        QuoteScreen.fingerLanded(at: point)
+        QuoteScreen.fingerMoved(to: point)
       case .ended, .cancelled, .failed:
         QuoteScreen.gate.release()
         QuoteScreen.fingerLeft()

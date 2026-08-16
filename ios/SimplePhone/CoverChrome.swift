@@ -12,18 +12,31 @@ import UIKit
 /// and selectors arrive as arguments. That is the seam. `QuoteScreen` decides
 /// behaviour, this decides appearance.
 enum CoverChrome {
-  /// The disc at the top of the cover: how long the phrase has left, and what a
-  /// finger is doing about it.
+  /// The countdown at the top of the cover: how long the phrase has left, and
+  /// what a finger is doing about it.
   ///
-  /// One circle with three things to say, in sequence and never at once, which
-  /// is what lets a single ring carry two opposite meanings:
+  /// One ring with three things to say, in sequence and never at once, which is
+  /// what lets it carry two opposite meanings without ambiguity:
   ///
-  /// - **Draining.** The ring empties over the configured duration. Time
-  ///   leaving, nobody doing anything.
-  /// - **Held.** The ring freezes where the eye last saw it, a pause appears in
-  ///   the middle, and a second ring fills the other way, thickening as it
-  ///   closes. Time stopped, someone building something.
+  /// - **Draining.** The ring empties over the configured duration with the
+  ///   seconds left written inside it. Time leaving, nobody doing anything.
+  /// - **Held.** It freezes where the eye last saw it and the number gives way
+  ///   to a pause. Time stopped, and it stays stopped for as long as the finger
+  ///   is down. Nothing is being committed to yet.
+  /// - **Closing.** Drag down and a second ring fills with the DISTANCE the
+  ///   finger has travelled, thickening as it goes. It is a ruler, not a clock:
+  ///   drag back up and it unwinds. Whole means pinned.
   /// - **Pinned.** Both rings go and the pause stays.
+  ///
+  /// BOTH RINGS SWEEP CLOCKWISE. Draining is the natural place to get that
+  /// wrong: animating `strokeEnd` down from whole retracts the arc's leading
+  /// edge ANTICLOCKWISE, which against a pin that fills clockwise reads as two
+  /// unrelated animations arguing. `strokeStart` up from nothing eats the ring
+  /// away from the same end the pin grows from, so both boundaries travel the
+  /// same way and the second gesture looks like it continues the first.
+  ///
+  /// No disc behind it. The ring and the number are the whole of it, over the
+  /// cover's own colour.
   ///
   /// Pause and not a padlock, deliberately. A padlock says you cannot leave,
   /// which is false: a tap, a drag sideways and the button all still work. A
@@ -33,7 +46,6 @@ enum CoverChrome {
   /// Takes no touches. It sits over the cover, and the cover is the thing
   /// listening for a finger.
   final class Badge: UIView {
-    private static let disc: CGFloat = 44
     private static let ringRadius: CGFloat = 25
     private static let side: CGFloat = 58
     private static let thin: CGFloat = 2
@@ -41,11 +53,17 @@ enum CoverChrome {
 
     /// The faint outline the two rings run along.
     private let track = CAShapeLayer()
-    /// The countdown: starts whole, empties.
+    /// The countdown: starts whole, is eaten away clockwise.
     private let countdown = CAShapeLayer()
-    /// The pin: starts at nothing, fills.
+    /// The pin: starts at nothing, fills clockwise.
     private let pin = CAShapeLayer()
     private let pause = UIImageView()
+    private let number = UILabel()
+
+    /// When the countdown reaches nothing, on the same clock CoreAnimation uses.
+    private var endsAt: CFTimeInterval = 0
+    private var ticker: CADisplayLink?
+    private let separator = Locale.current.decimalSeparator ?? "."
 
     init(config: QuoteCatalog.Config) {
       super.init(frame: CGRect(x: 0, y: 0, width: Self.side, height: Self.side))
@@ -54,14 +72,6 @@ enum CoverChrome {
       let colour: UIColor = config.isDark ? .white : .black
       let centre = CGPoint(x: Self.side / 2, y: Self.side / 2)
 
-      let disc = UIView(frame: CGRect(x: centre.x - Self.disc / 2, y: centre.y - Self.disc / 2,
-                                      width: Self.disc, height: Self.disc))
-      disc.backgroundColor = colour.withAlphaComponent(0.10)
-      disc.layer.cornerRadius = Self.disc / 2
-      addSubview(disc)
-
-      // From twelve o'clock, clockwise, so the countdown retracts back towards
-      // the top the way any dial does.
       let circle = UIBezierPath(arcCenter: centre, radius: Self.ringRadius,
                                 startAngle: -.pi / 2, endAngle: 1.5 * .pi,
                                 clockwise: true).cgPath
@@ -79,6 +89,15 @@ enum CoverChrome {
         self.layer.addSublayer(layer)
       }
 
+      number.font = font(for: config, size: 14)
+      number.textColor = colour.withAlphaComponent(0.75)
+      number.textAlignment = .center
+      number.frame = bounds
+      // The full duration, standing still, which is what the snapshot carries
+      // for the stretch before the app is drawing. Instant has nothing to count.
+      number.text = config.holdSeconds > 0 ? text(config.holdSeconds) : nil
+      addSubview(number)
+
       let symbol = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
       // Coloured into the image rather than left to `tintColor`, which a plain
       // UIImageView only honours for a template image. See `docs/native-notes.md`,
@@ -94,6 +113,8 @@ enum CoverChrome {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not from a nib") }
 
+    deinit { ticker?.invalidate() }
+
     /// The phrase's own clock has started. Called when the cover becomes
     /// touchable, not when the relay began: see `docs/native-notes.md`,
     /// "A countdown that cannot lie".
@@ -102,24 +123,32 @@ enum CoverChrome {
       countdown.removeAnimation(forKey: "sweep")
       // Model value at the destination, so it simply stays there when the
       // animation ends rather than needing to be kept alive past its own life.
-      countdown.strokeEnd = 0
-      let sweep = CABasicAnimation(keyPath: "strokeEnd")
-      sweep.fromValue = 1
-      sweep.toValue = 0
+      countdown.strokeStart = 1
+      let sweep = CABasicAnimation(keyPath: "strokeStart")
+      sweep.fromValue = 0
+      sweep.toValue = 1
       sweep.duration = seconds
       // Linear, because it is a clock. Any easing here would be the ring
       // disagreeing with the timer it is drawing.
       sweep.timingFunction = CAMediaTimingFunction(name: .linear)
       countdown.add(sweep, forKey: "sweep")
+
+      endsAt = CACurrentMediaTime() + seconds
+      showRemaining()
+      let link = CADisplayLink(target: Ticker(self), selector: #selector(Ticker.tick))
+      link.add(to: .main, forMode: .common)
+      ticker = link
     }
 
-    /// A finger arrived. Freeze, and start closing the pin.
-    func hold(over seconds: TimeInterval) {
+    /// A finger arrived. Freeze, and wait to see whether it means anything by
+    /// it. Nothing starts closing here: the pin is driven by the drag.
+    func hold() {
+      stopTicking()
       // Where the eye last saw it, not where the model says. Mid-animation the
       // two are a whole countdown apart.
-      if let shown = countdown.presentation()?.strokeEnd {
+      if let shown = countdown.presentation()?.strokeStart {
         countdown.removeAnimation(forKey: "sweep")
-        countdown.strokeEnd = shown
+        countdown.strokeStart = shown
       }
       // A crossfade rather than a cut: the pin starts at nothing, so cutting
       // the countdown would leave the badge ringless for the first moments of
@@ -132,44 +161,47 @@ enum CoverChrome {
       countdown.add(handover, forKey: "handover")
 
       pause.alpha = 0
-      UIView.animate(withDuration: 0.18) { self.pause.alpha = 1 }
+      UIView.animate(withDuration: 0.18) {
+        self.pause.alpha = 1
+        self.number.alpha = 0
+      }
 
-      pin.strokeEnd = 1
-      pin.lineWidth = Self.thick
-      let sweep = CABasicAnimation(keyPath: "strokeEnd")
-      sweep.fromValue = 0
-      sweep.toValue = 1
-      let weight = CABasicAnimation(keyPath: "lineWidth")
-      weight.fromValue = Self.thin
-      weight.toValue = Self.thick
-      let group = CAAnimationGroup()
-      group.animations = [sweep, weight]
-      group.duration = seconds
-      group.timingFunction = CAMediaTimingFunction(name: .linear)
-      pin.add(group, forKey: "close")
+      pinProgress(0)
     }
 
-    /// The finger left before the pin closed. The countdown is deliberately not
-    /// resumed: a press hands off the moment it lifts, so the cover is already
-    /// on its way out and a ring starting to move again would be describing time
-    /// nobody is going to spend.
+    /// How far down the drag has got, from nothing to whole.
+    ///
+    /// Set outright with implicit animation off, because the ring is tracking a
+    /// finger. CoreAnimation's default quarter-second fade on a layer property
+    /// would put the ring a quarter of a second behind the thumb drawing it,
+    /// which is the difference between a control and a progress bar.
+    func pinProgress(_ fraction: CGFloat) {
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      pin.strokeEnd = fraction
+      pin.lineWidth = Self.thin + (Self.thick - Self.thin) * fraction
+      CATransaction.commit()
+    }
+
+    /// The finger left before the pin closed. Neither the ring nor the number is
+    /// set going again: a press hands off the moment it lifts, so the cover is
+    /// already on its way out and a clock starting to move would be describing
+    /// time nobody is going to spend.
     func releaseHold() {
-      pin.removeAnimation(forKey: "close")
-      pin.strokeEnd = 0
-      pin.lineWidth = Self.thin
+      pinProgress(0)
       countdown.removeAnimation(forKey: "handover")
       countdown.opacity = 1
       pause.alpha = 0
+      number.alpha = 1
     }
 
     /// Pinned. The rings have nothing left to count, so they go and leave the
     /// pause holding the state on its own.
     func pinned() {
-      pin.removeAnimation(forKey: "close")
+      stopTicking()
       // Whole, and held whole for the length of the fade. Snapping it back to
       // nothing would undraw the ring at the exact instant it earned its point.
-      pin.strokeEnd = 1
-      pin.lineWidth = Self.thick
+      pinProgress(1)
       countdown.opacity = 0
 
       let fade = CABasicAnimation(keyPath: "opacity")
@@ -181,6 +213,36 @@ enum CoverChrome {
         layer.add(fade, forKey: "retire")
       }
       pause.alpha = 1
+      number.alpha = 0
+    }
+
+    fileprivate func showRemaining() {
+      let left = max(0, endsAt - CACurrentMediaTime())
+      // Only when the rendered string actually changes. At one decimal that is
+      // ten writes a second rather than sixty, without asking the display link
+      // for a frame rate the platform may or may not honour.
+      let next = text(left)
+      if number.text != next { number.text = next }
+      if left <= 0 { stopTicking() }
+    }
+
+    private func stopTicking() {
+      ticker?.invalidate()
+      ticker = nil
+    }
+
+    /// A comma where a comma belongs. `String(format:)` writes the C locale.
+    private func text(_ seconds: TimeInterval) -> String {
+      String(format: "%.1f", seconds).replacingOccurrences(of: ".", with: separator)
+    }
+
+    /// `CADisplayLink` retains its target, so the badge cannot be its own: the
+    /// runloop would keep it alive and `deinit`, the only place the link is
+    /// invalidated, would never run.
+    private final class Ticker: NSObject {
+      private weak var badge: Badge?
+      init(_ badge: Badge) { self.badge = badge }
+      @objc func tick() { badge?.showRemaining() }
     }
   }
 
@@ -318,6 +380,13 @@ enum CoverChrome {
     return tally
   }
 
+  /// Paints `container` as the cover, and hands back the stack holding the line
+  /// so a caller can hang the badge and the card's chrome off the bottom of it.
+  /// Nil means no phrase -- deliberately still a plain themed field, because
+  /// that is not the app list.
+  ///
+  /// `cardImage` wants the painting and not the stack, hence discardable.
+  @discardableResult
   static func fill(_ container: UIView, config: QuoteCatalog.Config, phrase: QuoteCatalog.Quote?) -> UIStackView? {
     let background: UIColor = config.isDark ? .black : .white
     container.backgroundColor = background
