@@ -67,30 +67,66 @@ enum RelayGateTests {
     check(opened == 1, "releasing after the duration opens")
   }
 
-  /// Holding then letting go hands off at once rather than serving out the rest
-  /// of a four second wait: the finger replaces the timer, it does not queue
-  /// behind it.
-  static func testReleaseBeatsTheClock() {
+  /// Resting a finger and lifting it again is not a decision.
+  ///
+  /// This used to hand off, on the reasoning that a press meant the user was
+  /// ready. It made a touch a commitment instead of a pause: reach for the
+  /// screen to read a line, change your mind, and lifting threw you into the app
+  /// regardless. Nothing but the clock and an explicit gesture opens anything
+  /// now, and the caller stops its own clock while the finger is down so the
+  /// time is genuinely held rather than merely ignored.
+  static func testReleasingWithoutAGestureLeavesTheClockOwing() {
     let gate = RelayGate()
     var opened = 0
     let token = gate.arm { opened += 1 }
     gate.press()
     gate.release()
-    check(opened == 1, "releasing opens before the duration has run out")
+    check(opened == 0, "lifting without a gesture does not open anything")
     gate.durationElapsed(token)
-    check(opened == 1, "the late tick does not open a second time")
+    check(opened == 1, "and the duration it went back to still opens it")
   }
 
-  /// The touch was cancelled rather than lifted: a call arrived, or the user
-  /// swiped away mid-press. A launcher that launches nothing is worse than one
-  /// that shows its list, so cancellation has to hand off like a release.
-  static func testCancelledTouchStillHandsOff() {
+  /// Sideways on a cover that is merely held, rather than pinned: go now.
+  static func testASidewaysDragOpensEarly() {
     let gate = RelayGate()
     var opened = 0
-    gate.arm { opened += 1 }
+    let token = gate.arm { opened += 1 }
+    gate.press()
+    gate.proceed()
+    check(opened == 1, "asking to go opens without waiting for the duration")
+    gate.durationElapsed(token)
+    check(opened == 1, "and the tick it beat does not open a second time")
+  }
+
+  /// The clock is restarted whenever a hold ends, and the tick scheduled before
+  /// the hold is still out there. Without a fresh stamp it lands early and cuts
+  /// the resumed countdown short.
+  static func testRestampingDropsTheTickFromBeforeAHold() {
+    let gate = RelayGate()
+    var opened = 0
+    let stale = gate.arm { opened += 1 }
+    gate.press()
+    let live = gate.restamp()
+    gate.release()
+    gate.durationElapsed(stale)
+    check(opened == 0, "the tick from before the hold is not recognised")
+    gate.durationElapsed(live)
+    check(opened == 1, "the one scheduled for what was left of it is")
+  }
+
+  /// The system took the touch away rather than the user lifting it. Identical
+  /// to a release, which now means the relay goes back to its clock rather than
+  /// handing off: no path may leave a handoff owed forever, and the duration is
+  /// what redeems it.
+  static func testCancelledTouchGoesBackToTheClock() {
+    let gate = RelayGate()
+    var opened = 0
+    let token = gate.arm { opened += 1 }
     gate.press()
     gate.cancelPress()
-    check(opened == 1, "a cancelled touch hands off like a release")
+    check(opened == 0, "a cancelled touch opens nothing, exactly like a release")
+    gate.durationElapsed(token)
+    check(opened == 1, "and the relay is still owed to its own duration")
   }
 
   /// Fingers do not always come in pairs.
@@ -131,8 +167,8 @@ enum RelayGateTests {
 
     let firstToken = gate.arm { first += 1 }
     gate.press()
-    gate.release()
-    check(first == 1, "relay one handed off on the release")
+    gate.proceed()
+    check(first == 1, "relay one handed off early on a sideways drag")
 
     let secondToken = gate.arm { second += 1 }
     gate.durationElapsed(firstToken)
@@ -152,10 +188,12 @@ enum RelayGateTests {
     let gate = RelayGate()
     var opened = 0
     gate.press()
-    gate.arm { opened += 1 }
+    let token = gate.arm { opened += 1 }
     check(opened == 0, "still held after arming")
+    gate.durationElapsed(token)
+    check(opened == 0, "the finger that arrived before the arm still holds the tick back")
     gate.release()
-    check(opened == 1, "releasing hands off without waiting for the tick")
+    check(opened == 1, "and lifting it lets that tick through")
   }
 
   /// The cover came down with a finger still on it and no cancellation ever
@@ -478,12 +516,242 @@ enum RelayGateTests {
     check(!gate.isCurrent(token), "reset stales the token it had handed out")
   }
 
+  // MARK: - The relay that was interrupted rather than finished
+
+  /// The ordinary end of a relay. The app left because the target opened, so
+  /// there is nothing to come back to.
+  static func testNothingInterruptedResumesNothing() {
+    var suspension = RelaySuspension()
+    check(!suspension.isPending, "a relay that was never interrupted owes nothing")
+    check(suspension.resume(at: 0) == nil, "and resuming it yields nothing")
+  }
+
+  /// The phone locked itself while the cover was counting down. Coming back
+  /// should carry on from where the clock stopped, not start over and not skip.
+  static func testAnUnfinishedCountdownResumesWithWhatWasLeft() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: false, held: false, secondsLeft: 0.9, total: 1.5, at: 100)
+    check(suspension.isPending, "an interrupted countdown is owed")
+    let resumed = suspension.resume(at: 130)
+    check(resumed?.secondsLeft == 0.9, "it resumes with the time that was left")
+    check(resumed?.total == 1.5, "and remembers how long it was, so the ring can pick up mid-sweep")
+    check(resumed?.pinned == false, "still counting, not pinned")
+  }
+
+  /// A pinned cover is inert: it never leaves on its own, so there is no reason
+  /// to stop offering it back. Pinning is the user saying they want this line.
+  static func testAPinnedCoverResumesHoweverLongItTakes() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: true, held: false, secondsLeft: 0, total: 1.5, at: 0)
+    let resumed = suspension.resume(at: 60 * 60 * 24)
+    check(resumed?.pinned == true, "a pin is still owed a day later")
+    check(resumed?.held == false, "and it was not merely a finger resting")
+  }
+
+  /// A FINGER RESTING IS NOT A PIN, and the difference is the whole reason
+  /// these are two flags rather than one.
+  ///
+  /// Both come back rather than counting down, because nobody keeps a finger on
+  /// the glass through a locked screen and resuming a countdown that was being
+  /// held back is the one reading the user certainly did not ask for. But a
+  /// cover that was PINNED already carries the pin's controls and the drag that
+  /// leaves it, and one that was merely held carries none of them. Collapsing
+  /// the two locked a cover with no way off it at all.
+  static func testARestingFingerIsRememberedAsHeldRatherThanPinned() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: false, held: true, secondsLeft: 0.9, total: 1.5, at: 0)
+    let resumed = suspension.resume(at: 10)
+    check(resumed?.held == true, "a finger that was down is remembered as held")
+    check(resumed?.pinned == false, "and NOT as a pin, which would promise controls it never built")
+  }
+
+  /// A held cover is as inert as a pinned one once it comes back, so it gets
+  /// the same absence of a deadline.
+  static func testAHeldCoverAlsoResumesHoweverLongItTakes() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: false, held: true, secondsLeft: 0.9, total: 1.5, at: 0)
+    check(suspension.resume(at: 60 * 60 * 24)?.held == true,
+          "a hold is still owed a day later, because it will not leave on its own either")
+  }
+
+  /// An unfinished countdown is NOT inert: resuming it hands the user to another
+  /// app. Long enough after the fact, that is an ambush rather than a courtesy.
+  static func testAStaleCountdownIsDroppedRatherThanResumed() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: false, held: false, secondsLeft: 0.9, total: 1.5, at: 0)
+    check(suspension.resume(at: RelaySuspension.window + 1) == nil,
+          "a countdown nobody came back for does not open anything")
+  }
+
+  /// Dropped and CONSUMED. A stale offer left in place would fire on the next
+  /// activation instead, which is the same ambush one foregrounding later.
+  static func testAStaleCountdownIsConsumedToo() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: false, held: false, secondsLeft: 0.9, total: 1.5, at: 0)
+    _ = suspension.resume(at: RelaySuspension.window + 1)
+    check(!suspension.isPending, "the stale offer is gone rather than pending")
+  }
+
+  /// Coming back is a single event. A second activation is someone opening the
+  /// app to use it, not someone still returning from the relay.
+  static func testResumingConsumesTheOffer() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: true, held: false, secondsLeft: 0, total: 1.5, at: 0)
+    _ = suspension.resume(at: 1)
+    check(suspension.resume(at: 2) == nil, "the offer is taken only once")
+  }
+
+  /// A new relay supersedes an interrupted one: the user chose something else.
+  static func testClearDropsTheOffer() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: true, held: false, secondsLeft: 0, total: 1.5, at: 0)
+    suspension.clear()
+    check(!suspension.isPending, "clearing drops it")
+    check(suspension.resume(at: 1) == nil, "and nothing comes back")
+  }
+
+  /// A clock that ran backwards must not read as an offer from the future that
+  /// is somehow always fresh. Same rule the return card follows.
+  static func testACountdownFromTheFutureIsRefused() {
+    var suspension = RelaySuspension()
+    suspension.interrupted(pinned: false, held: false, secondsLeft: 0.9, total: 1.5, at: 500)
+    check(suspension.resume(at: 100) == nil, "a suspension in the future is not resumed")
+  }
+
+  // MARK: - What a finger on the cover is asking for
+
+  /// A thumb that has not gone anywhere is asking for nothing. It still pauses,
+  /// but pausing is what a press does; this is about what LIFTING will do.
+  static func testAStillFingerPromisesNothing() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    let reading = drag.moved(x: 200, y: 400)
+    check(reading.gesture == .none, "no travel is no gesture")
+    check(reading.closed == 0, "and nothing is closed")
+    check(drag.promise == .none, "so lifting does nothing")
+  }
+
+  /// Below the slack the two axes are decided by tremor, and the glyph flickers
+  /// between pause and forward on a hand that is holding still.
+  static func testTremorIsNotAGesture() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    check(drag.moved(x: 204, y: 403).gesture == .none, "a few points either way is still nothing")
+    check(drag.moved(x: 200, y: 407).gesture == .none, "just under the slack, still nothing")
+    check(drag.moved(x: 200, y: 409).gesture == .pinning, "past it, the larger axis takes over")
+  }
+
+  static func testDraggingDownClosesThePinInProportion() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    check(drag.moved(x: 200, y: 460).closed == 0.5, "half the travel closes half the ring")
+    let full = drag.moved(x: 200, y: 520)
+    check(full.closed == 1, "the whole travel closes it")
+    check(full.armed, "and arms it")
+    check(drag.promise == .pinning, "lifting now pins")
+  }
+
+  /// The buzz is a transition, not a state. A thumb resting at the far end of
+  /// the travel would otherwise buzz on every touch event it produces.
+  static func testTheRingArmsOnceNoMatterHowLongYouSitThere() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    check(drag.moved(x: 200, y: 530).justArmed, "closing the ring says so")
+    check(!drag.moved(x: 200, y: 540).justArmed, "staying closed does not say it again")
+    check(!drag.moved(x: 200, y: 600).justArmed, "nor does going further")
+  }
+
+  /// Backing out. The whole reason nothing acts until the finger lifts.
+  static func testDraggingBackOpensTheRingAndTakesThePromiseBack() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    _ = drag.moved(x: 200, y: 530)
+    check(drag.promise == .pinning, "closed, so lifting would pin")
+    let backedOut = drag.moved(x: 200, y: 440)
+    check(!backedOut.armed, "coming back up disarms it")
+    check(drag.promise == .none, "and lifting now does nothing")
+    check(drag.moved(x: 200, y: 530).justArmed, "going back out arms it again, and says so")
+  }
+
+  /// Up is not a shorter way to pin. Coming back toward the origin has to mean
+  /// backing out, or there is no way to change your mind.
+  static func testDraggingUpClosesNothing() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    let up = drag.moved(x: 200, y: 200)
+    check(up.gesture == .none, "two hundred points up is not a gesture")
+    check(up.closed == 0, "and closes nothing")
+  }
+
+  static func testDraggingSidewaysClosesTheShorterRing() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    check(drag.moved(x: 230, y: 400).closed == 0.5, "half of sixty is half the ring")
+    check(drag.moved(x: 260, y: 400).armed, "sixty arms it")
+    check(drag.promise == .skipping, "lifting now goes to the app")
+  }
+
+  /// Either way sideways. There is no convention to guess here, only a thumb.
+  static func testSidewaysCountsInBothDirections() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    check(drag.moved(x: 140, y: 400).armed, "sixty to the left arms it too")
+  }
+
+  /// The bug the screenshot caught: the ring answering one axis while the glyph
+  /// answered the other. One gesture at a time, and the larger axis owns it.
+  static func testTheLargerAxisOwnsTheDrag() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    check(drag.moved(x: 260, y: 420).gesture == .skipping, "sideways leads, sideways owns it")
+    let turned = drag.moved(x: 260, y: 500)
+    check(turned.gesture == .pinning, "going further down hands it over")
+    check(turned.changed, "and says the gesture changed, so the glyph can follow")
+    check(!turned.armed, "the promise made by the other gesture does not carry across")
+  }
+
+  /// Diagonals are decided, not refused.
+  static func testAPerfectDiagonalGoesToThePin() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    check(drag.moved(x: 250, y: 450).gesture == .pinning,
+          "with neither axis ahead, the one that asks for more wins")
+  }
+
+  /// The drag that leaves a cover already pinned: sideways is the only question
+  /// worth asking, because it is already doing what pinning would ask for.
+  static func testTheExitDragNeverPins() {
+    var drag = CoverDrag(canPin: false)
+    drag.began(x: 0, y: 0)
+    check(drag.moved(x: 0, y: 300).gesture == .none, "dragging down a pinned cover asks for nothing")
+    check(drag.moved(x: 70, y: 300).gesture == .skipping,
+          "and sideways still leaves, even against more vertical travel")
+  }
+
+  /// A gesture belongs to the touch that started it.
+  static func testAReadingBeforeAnyOriginIsNothing() {
+    var drag = CoverDrag()
+    check(drag.moved(x: 200, y: 900).gesture == .none, "no origin, no gesture")
+    check(drag.promise == .none, "and nothing promised")
+  }
+
+  static func testEndingForgetsEverything() {
+    var drag = CoverDrag()
+    drag.began(x: 200, y: 400)
+    _ = drag.moved(x: 200, y: 530)
+    drag.end()
+    check(drag.promise == .none, "ending drops the promise")
+    check(drag.moved(x: 200, y: 530).gesture == .none, "and the origin with it")
+  }
+
   static func main() {
     testOpensWhenDurationRunsOut()
     testInstantStillFreezesUnderAFinger()
     testPressDuringTheDurationHolds()
-    testReleaseBeatsTheClock()
-    testCancelledTouchStillHandsOff()
+    testReleasingWithoutAGestureLeavesTheClockOwing()
+    testASidewaysDragOpensEarly()
+    testRestampingDropsTheTickFromBeforeAHold()
+    testCancelledTouchGoesBackToTheClock()
     testUnbalancedTouches()
     testStrayReleaseDoesNotPrimeTheNextRelay()
     testOrphanTickCannotOpenTheNextRelay()
@@ -518,6 +786,31 @@ enum RelayGateTests {
     testAnAbandonedLockDoesNotPoisonTheNextRelay()
     testATokenKnowsWhichRelayItBelongsTo()
     testResetStalesEveryToken()
+
+    testNothingInterruptedResumesNothing()
+    testAnUnfinishedCountdownResumesWithWhatWasLeft()
+    testAPinnedCoverResumesHoweverLongItTakes()
+    testARestingFingerIsRememberedAsHeldRatherThanPinned()
+    testAHeldCoverAlsoResumesHoweverLongItTakes()
+    testAStaleCountdownIsDroppedRatherThanResumed()
+    testAStaleCountdownIsConsumedToo()
+    testResumingConsumesTheOffer()
+    testClearDropsTheOffer()
+    testACountdownFromTheFutureIsRefused()
+
+    testAStillFingerPromisesNothing()
+    testTremorIsNotAGesture()
+    testDraggingDownClosesThePinInProportion()
+    testTheRingArmsOnceNoMatterHowLongYouSitThere()
+    testDraggingBackOpensTheRingAndTakesThePromiseBack()
+    testDraggingUpClosesNothing()
+    testDraggingSidewaysClosesTheShorterRing()
+    testSidewaysCountsInBothDirections()
+    testTheLargerAxisOwnsTheDrag()
+    testAPerfectDiagonalGoesToThePin()
+    testTheExitDragNeverPins()
+    testAReadingBeforeAnyOriginIsNothing()
+    testEndingForgetsEverything()
 
     print("")
     if failures == 0 {

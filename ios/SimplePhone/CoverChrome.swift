@@ -12,6 +12,16 @@ import UIKit
 /// and selectors arrive as arguments. That is the seam. `QuoteScreen` decides
 /// behaviour, this decides appearance.
 enum CoverChrome {
+  /// Marks the controls a pinned cover or a return card adds, so they can be
+  /// taken off again as a group. Any value that is not a tag anyone else uses;
+  /// zero is every view's default and would match the whole screen.
+  static let cardChromeTag = 0x5150
+
+  /// Strips them. Safe on a cover that never had any.
+  static func removeCardChrome(from container: UIView) {
+    container.subviews.filter { $0.tag == cardChromeTag }.forEach { $0.removeFromSuperview() }
+  }
+
   /// The countdown at the top of the cover: how long the phrase has left, and
   /// what a finger is doing about it.
   ///
@@ -39,7 +49,7 @@ enum CoverChrome {
   /// cover's own colour.
   ///
   /// Pause and not a padlock, deliberately. A padlock says you cannot leave,
-  /// which is false: a tap, a drag sideways and the button all still work. A
+  /// which is false: a drag sideways and the button both still work. A
   /// pause says nothing happens until you say so, which is what is actually
   /// true, and it is the same word the frozen ring is already saying.
   ///
@@ -61,14 +71,24 @@ enum CoverChrome {
     /// The pin: starts at nothing, fills clockwise.
     private let pin = CAShapeLayer()
     private let pause = UIImageView()
+    /// Shown in the pause's place once a sideways drag has gone far enough that
+    /// lifting will go straight to the app.
+    private let forward = UIImageView()
     private let number = UILabel()
+    private var skipping = false
 
     /// When the countdown reaches nothing, on the same clock CoreAnimation uses.
     private var endsAt: CFTimeInterval = 0
     private var ticker: CADisplayLink?
     private let separator = Locale.current.decimalSeparator ?? "."
 
-    init(config: QuoteCatalog.Config) {
+    /// False on the return card, which is not a relay: nothing there is paused,
+    /// so a pause glyph would be describing a state that does not exist. Only
+    /// the way out draws.
+    private let showsPause: Bool
+
+    init(config: QuoteCatalog.Config, showsPause: Bool = true) {
+      self.showsPause = showsPause
       super.init(frame: CGRect(x: 0, y: 0, width: Self.side, height: Self.side))
       isUserInteractionEnabled = false
 
@@ -105,12 +125,14 @@ enum CoverChrome {
       // Coloured into the image rather than left to `tintColor`, which a plain
       // UIImageView only honours for a template image. See `docs/native-notes.md`,
       // "SF Symbols in a UIImageView".
-      pause.image = UIImage(systemName: "pause.fill", withConfiguration: symbol)?
-        .withTintColor(colour.withAlphaComponent(0.75), renderingMode: .alwaysOriginal)
-      pause.sizeToFit()
-      pause.center = centre
-      pause.alpha = 0
-      addSubview(pause)
+      for (view, name) in [(pause, "pause.fill"), (forward, "forward.fill")] {
+        view.image = UIImage(systemName: name, withConfiguration: symbol)?
+          .withTintColor(colour.withAlphaComponent(0.75), renderingMode: .alwaysOriginal)
+        view.sizeToFit()
+        view.center = centre
+        view.alpha = 0
+        addSubview(view)
+      }
     }
 
     @available(*, unavailable)
@@ -121,14 +143,39 @@ enum CoverChrome {
     /// The phrase's own clock has started. Called when the cover becomes
     /// touchable, not when the relay began: see `docs/native-notes.md`,
     /// "A countdown that cannot lie".
-    func drain(over seconds: TimeInterval) {
-      guard seconds > 0 else { return }
+    /// `total` is what the countdown was to begin with. It differs from
+    /// `seconds` only when a relay is being resumed after an interruption, and
+    /// the ring then picks the sweep up where it stopped rather than starting
+    /// it over on a whole ring that has no time behind it.
+    func drain(over seconds: TimeInterval, of total: TimeInterval) {
+      guard seconds > 0, total > 0 else { return }
+      // Before anything else. A resumed relay drains twice, and the link from
+      // the first one would otherwise go on ticking forever with nothing to
+      // stop it: `stopTicking` only ever holds the newest.
+      stopTicking()
       countdown.removeAnimation(forKey: "sweep")
+      // ALL THREE, because this badge may have been left in the pinned or the
+      // quiet state: a warm relay reuses whatever cover it finds, and a cover
+      // that was pinned still carries the badge that pin retired. Restoring
+      // only the countdown left it sweeping with no track behind it and a pause
+      // still showing over a relay that was plainly counting.
+      for layer in [track, countdown] {
+        layer.removeAnimation(forKey: "retire")
+        layer.opacity = 1
+      }
+      pin.removeAnimation(forKey: "retire")
+      pin.opacity = 1
+      pin.strokeEnd = 0
+      pin.lineWidth = Self.thin
+      number.alpha = 1
+      skipping = false
+      pause.alpha = 0
+      forward.alpha = 0
       // Model value at the destination, so it simply stays there when the
       // animation ends rather than needing to be kept alive past its own life.
       countdown.strokeStart = 1
       let sweep = CABasicAnimation(keyPath: "strokeStart")
-      sweep.fromValue = 0
+      sweep.fromValue = 1 - min(CGFloat(seconds / total), 1)
       sweep.toValue = 1
       sweep.duration = seconds
       // Linear, because it is a clock. Any easing here would be the ring
@@ -164,13 +211,46 @@ enum CoverChrome {
       countdown.opacity = 0
       countdown.add(handover, forKey: "handover")
 
+      skipping = false
       pause.alpha = 0
+      forward.alpha = 0
       UIView.animate(withDuration: 0.18) {
         self.pause.alpha = 1
         self.number.alpha = 0
       }
 
       pinProgress(0)
+    }
+
+    /// The drag has gone far enough sideways that lifting means go, or has come
+    /// back from it. The glyph is the only feedback this gesture gets, which is
+    /// the point: nothing is being built up, so there is nothing to watch fill.
+    func showSkip(_ on: Bool) {
+      guard skipping != on else { return }
+      skipping = on
+      UIView.animate(withDuration: 0.15) {
+        self.pause.alpha = (on || !self.showsPause) ? 0 : 1
+        self.forward.alpha = on ? 1 : 0
+      }
+    }
+
+    /// Nothing at all, until something is asked of it.
+    ///
+    /// The return card's resting state. There is no clock to draw and nothing
+    /// is paused, so the badge stays out of the way and the ring appears only
+    /// once a finger starts moving toward the way out.
+    func quiet() {
+      stopTicking()
+      skipping = false
+      number.alpha = 0
+      pause.alpha = 0
+      forward.alpha = 0
+      for layer in [track, countdown, pin] {
+        layer.removeAnimation(forKey: "retire")
+        layer.opacity = 0
+      }
+      pin.strokeEnd = 0
+      pin.lineWidth = Self.thin
     }
 
     /// How far down the drag has got, from nothing to whole.
@@ -182,20 +262,33 @@ enum CoverChrome {
     func pinProgress(_ fraction: CGFloat) {
       CATransaction.begin()
       CATransaction.setDisableActions(true)
+      // Both rings are brought back, which matters only on a cover that is
+      // ALREADY pinned: `pinned` retired them, and the drag that leaves reuses
+      // this so the way out looks like the way in.
+      for layer in [track, pin] {
+        layer.removeAnimation(forKey: "retire")
+        layer.opacity = 1
+      }
       pin.strokeEnd = fraction
       pin.lineWidth = Self.thin + (Self.thick - Self.thin) * fraction
       CATransaction.commit()
     }
 
-    /// The finger left before the pin closed. Neither the ring nor the number is
-    /// set going again: a press hands off the moment it lifts, so the cover is
-    /// already on its way out and a clock starting to move would be describing
-    /// time nobody is going to spend.
+    /// The finger left having asked for nothing, so the badge goes back to
+    /// counting: rings back to where they were, number back in place of the
+    /// pause, pin ring emptied.
+    ///
+    /// The doc here used to say the opposite -- that nothing is set going again,
+    /// because lifting hands off. That stopped being true when a press stopped
+    /// being a commitment. `QuoteScreen.resumeAfterHold` restarts the clock this
+    /// is drawing.
     func releaseHold() {
       pinProgress(0)
       countdown.removeAnimation(forKey: "handover")
       countdown.opacity = 1
+      skipping = false
       pause.alpha = 0
+      forward.alpha = 0
       number.alpha = 1
     }
 
@@ -216,6 +309,11 @@ enum CoverChrome {
         layer.opacity = 0
         layer.add(fade, forKey: "retire")
       }
+      // The pin is the last word, so the badge says only what it means. Leaving
+      // the forward arrow up put it over the pause on any cover pinned by a
+      // drag that had gone sideways first, and it is drawn later, so it won.
+      skipping = false
+      forward.alpha = 0
       pause.alpha = 1
       number.alpha = 0
     }
@@ -253,8 +351,9 @@ enum CoverChrome {
   /// The badge, centred at the top, on the same line as the copy and share
   /// controls and as the system's own back breadcrumb.
   @discardableResult
-  static func addBadge(to container: UIView, config: QuoteCatalog.Config) -> Badge {
-    let badge = Badge(config: config)
+  static func addBadge(to container: UIView, config: QuoteCatalog.Config,
+                       showsPause: Bool = true) -> Badge {
+    let badge = Badge(config: config, showsPause: showsPause)
     badge.translatesAutoresizingMaskIntoConstraints = false
     container.addSubview(badge)
     NSLayoutConstraint.activate([
@@ -360,10 +459,15 @@ enum CoverChrome {
     let shareButton = chromeButton(symbol: "square.and.arrow.up", label: strings["share"] ?? "Share",
                                    target: target, action: share, tint: foreground)
 
-    container.addSubview(tally)
-    container.addSubview(back)
-    container.addSubview(copyButton)
-    container.addSubview(shareButton)
+    // Tagged so `QuoteScreen` can take them off again without knowing what they
+    // are. A pinned cover that is walked away from is left standing on purpose,
+    // and the next relay reuses it: without this, its Copy, Share and "Open The
+    // Simple Phone" came along, and that last one silently cancels the launch
+    // the user just asked for.
+    for view in [tally, back, copyButton, shareButton] as [UIView] {
+      view.tag = cardChromeTag
+      container.addSubview(view)
+    }
     NSLayoutConstraint.activate([
       shareButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
       shareButton.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 8),

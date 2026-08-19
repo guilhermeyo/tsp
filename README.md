@@ -90,19 +90,27 @@ Twenty phrases ship per language, each attributed, each drawn from that language
 rather than translated from English. You can add your own, and yours are never touched when you
 switch languages.
 
-**Hold the screen and the phrase stays.** Press anywhere while it is up and the handoff waits; lift
-your thumb and you go.
+**Touch the screen and the phrase stops.** The countdown freezes for as long as your finger is
+there, and it commits you to nothing: lift it again and the clock carries on from where it stopped.
 
-**Drag and it pins.** Without lifting, drag up or down. A ring at the top closes in step with your
-thumb, and when it is whole the cover is yours: nothing leaves on its own any more. From there, tap
-or drag sideways to carry on to the app you picked, or take the button at the bottom to stay here
-instead.
+**Drag and it decides.** Down closes a ring at the top and the cover becomes yours, staying until
+you say otherwise. Sideways, either way, closes a shorter ring and swaps the pause for a forward
+arrow: lift, and you go to the app now instead of waiting the rest out. Whichever way you have
+moved further is the one being asked for, and dragging back opens the ring again and takes the
+promise back with it. Nothing happens until you lift.
+
+From a cover that has stopped, the same sideways drag carries on to the app you picked, or the
+button at the bottom leaves you here.
 
 Distance rather than a timer, on purpose. A timed hold makes you commit before you know whether the
 screen even heard you, and for the first fraction of a second it has not — see the dead window
 below. A drag answers in the first millimetre, because the ring is following your thumb. The buzz
 when you touch down says the same thing: if nothing buzzes, the press never arrived. Lift, press
 again.
+
+**Locking the phone does not lose your place.** Whatever the cover was doing when you were
+interrupted is what it goes back to: a stopped one waits, and one that was still counting picks the
+clock up where it left off.
 
 The rule lives in `ios/SimplePhone/RelayGate.swift` and is the one native thing here with its own
 test suite.

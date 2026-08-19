@@ -133,6 +133,29 @@ enum QuoteScreen {
   /// What the phrase you missed was, and whether you are owed it back.
   private static var pendingReturn = RelayReturn()
 
+  /// Whether the last relay was interrupted rather than finished, and what to
+  /// put back if so.
+  private static var suspension = RelaySuspension()
+
+  /// What the current relay does when it hands off. Kept so an interrupted one
+  /// can be armed again with the same destination on the way back in, without
+  /// the suspension having to carry a URL and stop being a Foundation type.
+  private static var armedWork: (() -> Void)?
+
+  /// When the visible countdown runs out, and how long it was to begin with.
+  /// Read only at the moment a relay is interrupted, to work out what is left.
+  private static var countdownDeadline: CFTimeInterval?
+  private static var countdownTotal: TimeInterval = 0
+
+  /// No deadline means the clock never started -- a finger landed inside the
+  /// dead window before the cover was touchable -- so the whole of it is left,
+  /// not none of it. Returning zero there handed off the moment the finger
+  /// lifted, which is the exact behaviour a press is no longer allowed to have.
+  private static func remainingCountdown() -> TimeInterval {
+    guard let countdownDeadline else { return countdownTotal }
+    return max(countdownDeadline - CACurrentMediaTime(), 0)
+  }
+
   /// The line that was on the cover when THIS relay started.
   ///
   /// Captured here and not read back later, because backgrounding rolls the
@@ -147,6 +170,10 @@ enum QuoteScreen {
     clearCoverGestures()
     // A hold belongs to the cover it was made on. See `forgetHold`.
     forgetHold()
+    // Launching something supersedes whatever the last relay was interrupted
+    // in the middle of: this IS the user choosing, and they chose this instead.
+    suspension.clear()
+    isShowingCard = false
     // A card still owed when a new relay starts was never collected: the user
     // launched something else instead of tapping the breadcrumb, so that line
     // is one they chose not to read.
@@ -169,6 +196,11 @@ enum QuoteScreen {
   /// as the process, and repainting the cover blank would be worse than
   /// repainting it the same.
   private static func keptQuote(_ config: QuoteCatalog.Config) -> QuoteCatalog.Quote? {
+    // The off switch, honoured here as everywhere else. `roll`, `restoreOrRoll`
+    // and `countAsShown` all refuse when Phrases is off; keeping a line that was
+    // already on screen was the one path that did not, so switching it off left
+    // the last phrase painted into every snapshot after it.
+    guard config.enabled else { return nil }
     guard let text = relayPhrase ?? QuoteCatalog.loadStats().current else { return nil }
     return config.items.first { $0.text == text }
   }
@@ -182,6 +214,13 @@ enum QuoteScreen {
   private static func clearCoverGestures() {
     guard let root = window?.rootViewController?.view else { return }
     root.gestureRecognizers?.forEach(root.removeGestureRecognizer)
+    // AND THE CONTROLS THEY BELONGED TO. A pinned cover walked away from is
+    // left standing on purpose -- `cover(forSnapshot:)` steps aside for it --
+    // and a warm relay reuses whatever cover it finds. Without this, the next
+    // launch inherited that pin's Copy, Share and "Open The Simple Phone", and
+    // the last of those silently cancels the relay the user just asked for.
+    CoverChrome.removeCardChrome(from: root)
+    tallyLabel = nil
   }
 
   /// Called the instant the target is asked to open, which is the moment the
@@ -195,17 +234,101 @@ enum QuoteScreen {
   /// they did not get to read, or they are opening the app to use it.
   static func activate() {
     guard !relayInFlight else { return }
-    if let missed = pendingReturn.consume(at: Date().timeIntervalSince1970), window != nil {
+    let now = Date().timeIntervalSince1970
+    // Before the card, because they answer different questions and only one can
+    // be true: a card is owed when something DID open, a suspension when nothing
+    // did.
+    if let resumed = suspension.resume(at: now), window != nil, let work = armedWork {
+      resumeRelay(resumed, work)
+      return
+    }
+    if let missed = pendingReturn.consume(at: now), window != nil {
       presentCard(missed)
       return
     }
     dismiss()
   }
 
+  /// Puts the user back in the relay they were taken out of.
+  ///
+  /// Nothing is repainted, and that is the whole trick: `cover(forSnapshot:)`
+  /// left this cover alone on the way out, so the phrase, the pin's controls and
+  /// the badge are all still on screen exactly as they were, and were what the
+  /// system snapshotted. There is nothing to restore, only a clock to restart.
+  private static func resumeRelay(_ resumed: RelaySuspension.Resumed,
+                                  _ work: @escaping () -> Void) {
+    relayInFlight = true
+    let token = gate.arm(work)
+
+    guard !resumed.pinned else {
+      // The drag `engageLock` left on the view is still attached, along with
+      // the controls, because `cover(forSnapshot:)` left this cover alone. So
+      // locking again is the entire restoration.
+      gate.lock()
+      return
+    }
+    guard !resumed.held else {
+      // A cover that was merely HELD has none of that. `engageLock` locks the
+      // gate AND builds the controls and the way out, which is exactly what is
+      // missing, so it is the whole answer rather than half of one.
+      //
+      // Locking without it produced a full-screen phrase with no countdown, no
+      // controls and no working gesture, which survived being relaunched: every
+      // touch route is gated on `!gate.locked`, `dismiss` refuses to run for
+      // the length of a relay, and a pinned cover is a relay still in flight.
+      engageLock()
+      return
+    }
+
+    // Known before the settle, because a finger can land inside it and
+    // `remainingCountdown` would otherwise read the deadline from BEFORE the
+    // interruption -- long past by then, so worth zero, so lifting hands off at
+    // once. `startCountdown` replaces both with the exact values.
+    countdownTotal = resumed.total
+    countdownDeadline = CACurrentMediaTime() + touchSettleDelay + resumed.secondsLeft
+
+    // The same settle as a fresh relay. Unlocking has its own stretch where the
+    // app is drawing but not yet being handed touches, so a countdown started
+    // at this instant would again be partly unreachable.
+    DispatchQueue.main.asyncAfter(deadline: .now() + touchSettleDelay) {
+      startCountdown(resumed.secondsLeft, of: resumed.total, token: token)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + touchSettleDelay + resumed.secondsLeft) {
+      gate.durationElapsed(token)
+    }
+  }
+
   /// The relay is over when the app has left, not when `open` was called.
   /// Releasing at the call site left the handoff itself -- the exact interval
   /// the phrase exists to cover -- unguarded.
   static func endRelay() {
+    // A relay that ends with NOTHING HANDED OFF did not finish, it was
+    // interrupted: the screen locked itself, a call came in, the user left
+    // mid-read. iOS reports every one of those as the same backgrounding as a
+    // successful handoff, and the only thing that tells them apart is whether
+    // anything was ever opened.
+    //
+    // Read before `gate.reset` and `forgetHold` clear the two things it needs.
+    // A finger still down counts as a pin: holding means "I am still reading",
+    // and nobody keeps a finger on the glass through a locked screen.
+    if relayInFlight, !pendingReturn.isPending, armedWork != nil {
+      suspension.interrupted(pinned: gate.locked, held: isHolding,
+                             secondsLeft: remainingCountdown(),
+                             total: countdownTotal,
+                             at: Date().timeIntervalSince1970)
+    } else if isShowingCard, let phrase = cardPhrase?.text {
+      // THE CARD NEEDS THE SAME MERCY, by the same reasoning and against the
+      // same interruptions. Putting it up consumed the offer, so a backgrounding
+      // from a card looked exactly like one from the app list: the exit rolled
+      // a new phrase and the next activation found nothing owed and tore the
+      // card down. The user locked their phone reading a line and came back to
+      // a different one.
+      //
+      // Owed again rather than suspended, because the card already has a
+      // mechanism for being owed and `activate` already knows how to serve it.
+      pendingReturn.handedOff(phrase: phrase, target: resumeTarget,
+                              at: Date().timeIntervalSince1970)
+    }
     relayInFlight = false
     // Every route that reports a finger stops at `relayInFlight`, so a finger
     // still down when the relay ends has no way left to report its own lift:
@@ -243,6 +366,13 @@ enum QuoteScreen {
     let config = QuoteCatalog.loadConfig()
 
     if forSnapshot {
+      // AN INTERRUPTED RELAY IS COMING BACK TO THIS EXACT COVER, so this is the
+      // one backgrounding that must not touch it. The snapshot IS what the user
+      // sees on the way back in, and repainting would roll a different line into
+      // it -- which is the flash-then-swap the user reported -- while wiping the
+      // pin, its controls and the badge along with it.
+      if suspension.isPending { return 0 }
+
       let next: QuoteCatalog.Quote?
       if rollOwed || !pendingReturn.isPending {
         next = QuoteCatalog.roll(config)
@@ -304,6 +434,14 @@ enum QuoteScreen {
     fingerLeft()
     cardPhrase = nil
     resumeTarget = nil
+    isShowingCard = false
+    // The cover this relay belonged to is gone, so there is nothing left to put
+    // anyone back into. `activate` has already consumed the offer by now; this
+    // is what stops one surviving any OTHER way the cover comes down.
+    suspension.clear()
+    armedWork = nil
+    countdownDeadline = nil
+    countdownTotal = 0
     frameLink?.invalidate()
     frameLink = nil
     framesLeft = 0
@@ -341,6 +479,7 @@ enum QuoteScreen {
   private static func presentCard(_ missed: RelayReturn.Missed) {
     let text = missed.phrase
     resumeTarget = missed.target
+    isShowingCard = true
     guard let overlay = window, let root = overlay.rootViewController?.view else { return }
     // A touch on the card is not a touch on a relay. Without this the press
     // that dismisses it would leave the gate holding, and the NEXT relay would
@@ -353,6 +492,14 @@ enum QuoteScreen {
     clearCoverGestures()
 
     let config = QuoteCatalog.loadConfig()
+    // Switched off between the handoff and the return. Offering the line back
+    // now would be the off switch failing to be off, on the one screen whose
+    // whole purpose is to show a phrase.
+    guard config.enabled else {
+      isShowingCard = false
+      dismiss()
+      return
+    }
     let author = config.items.first { $0.text == text }?.author
     let count = QuoteCatalog.loadStats().counts[text] ?? 0
 
@@ -371,13 +518,17 @@ enum QuoteScreen {
     // where I was going. Here that is the app the user just came BACK from,
     // which is why the destination had to be remembered alongside the line.
     //
-    // Swipe only, and no tap. On a pinned cover a tap is someone mid-launch
-    // carrying on; on this card it would be someone who deliberately came back
-    // being thrown out again by a stray touch.
     // A PAN and not a swipe. `UISwipeGestureRecognizer` wants a flick: a
-    // deliberate, unhurried drag to the right never reaches its velocity
-    // threshold and is silently ignored, which is exactly what a person doing
-    // what the feature describes would do.
+    // deliberate, unhurried drag never reaches its velocity threshold and is
+    // silently ignored, which is exactly what a person doing what the feature
+    // describes would do. It is also the only kind that can drive a ring.
+    // Only when there is somewhere to go. A badge that answers a drag leading
+    // nowhere is an offer the card cannot keep.
+    if resumeTarget != nil {
+      badge = CoverChrome.addBadge(to: root, config: config, showsPause: false)
+      badge?.quiet()
+    }
+
     let drag = UIPanGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.resume(_:)))
     drag.cancelsTouchesInView = false
     root.addGestureRecognizer(drag)
@@ -385,20 +536,13 @@ enum QuoteScreen {
     root.layoutIfNeeded()
   }
 
-  /// Far enough sideways, either way, to mean "take me there" rather than a
-  /// finger settling.
-  ///
-  /// Direction is deliberately not checked: asking for one only tests whether
-  /// the user guessed the same convention as the author. Read on `.ended`, so a
-  /// threshold crossed mid-drag cannot fire under a thumb still deciding.
-  private static func draggedSideways(_ recognizer: UIGestureRecognizer) -> Bool {
-    guard let pan = recognizer as? UIPanGestureRecognizer, pan.state == .ended else { return false }
-    let moved = pan.translation(in: pan.view)
-    return abs(moved.x) > 60 && abs(moved.x) > abs(moved.y)
-  }
-
   /// Where the user was going when the phrase got away from them.
   private static var resumeTarget: URL?
+
+  /// The return card is what is on screen right now. Consuming the offer is
+  /// what puts it up, so without this nothing downstream can tell a card from
+  /// the app list.
+  private static var isShowingCard = false
 
   /// Back to the app they came from, from the card.
   ///
@@ -407,28 +551,71 @@ enum QuoteScreen {
   /// under someone who came back to read this one. If the open fails the card
   /// simply stays, which is a fair way to say nothing happened.
   fileprivate static func resumeJourney(_ recognizer: UIGestureRecognizer) {
-    guard draggedSideways(recognizer), let target = resumeTarget else { return }
+    guard let pan = recognizer as? UIPanGestureRecognizer, resumeTarget != nil,
+          let badge else { return }
+    let moved = pan.translation(in: pan.view)
+
+    switch pan.state {
+    case .began:
+      exitDrag.began(x: 0, y: 0)
+      return
+    case .changed:
+      // The same arrow over the same sixty points as everywhere else. There is
+      // nothing to count down here, so the badge is invisible until a finger
+      // starts moving and the ring is the only thing it ever draws.
+      show(exitDrag.moved(x: moved.x, y: moved.y), on: badge)
+      return
+    case .ended:
+      let promised = exitDrag.promise
+      exitDrag.end()
+      // Whatever the drag asked for, it is over: the badge goes back to being
+      // invisible. Leaving it whole on the way out left a card sitting behind a
+      // full ring and a forward arrow describing a gesture nothing would answer.
+      badge.quiet()
+      guard promised == .skipping else { return }
+    default:
+      exitDrag.end()
+      badge.quiet()
+      return
+    }
+
+    guard let target = resumeTarget else { return }
     resumeTarget = nil
-    UIApplication.shared.open(target, options: [:]) { ok in
-      // RE-ARM, and this is the part that was missing. Resuming opens the
-      // target directly instead of going through the relay, so nothing
-      // recorded that a phrase was owed again: the second time the user came
-      // back, the cover found nothing pending and fell through to the list.
-      //
-      // If a line is worth coming back to once it is worth coming back to
-      // twice. Bouncing keeps working for as long as the user keeps bouncing,
-      // and the two minute window still ends it once they settle into the
-      // other app.
-      guard ok, let phrase = cardPhrase?.text else { return }
+
+    // RE-ARMED BEFORE THE OPEN, not in its completion. Resuming goes straight
+    // to the target instead of through the relay, so nothing else records that
+    // a phrase is owed again -- and the second time the user came back, the
+    // cover found nothing pending and fell through to the list.
+    //
+    // If a line is worth coming back to once it is worth coming back to twice.
+    // Bouncing keeps working for as long as the user keeps bouncing, and the
+    // two minute window still ends it once they settle into the other app.
+    //
+    // The ORDER is the part that took an audit to see. `didEnterBackground`
+    // reads `pendingReturn.isPending` to decide whether the exit keeps this
+    // line or rolls a new one, and the open's completion is asynchronous: on a
+    // target that cold-starts slowly the backgrounding won that race, painted a
+    // different phrase into the snapshot, and the user watched the line change
+    // under them on the way back. Every other handoff records first for the
+    // same reason -- see `scheduleOpen`.
+    if let phrase = cardPhrase?.text {
       pendingReturn.handedOff(phrase: phrase, target: target,
                               at: Date().timeIntervalSince1970)
+    }
+
+    UIApplication.shared.open(target, options: [:]) { ok in
+      guard !ok else { return }
+      // Nothing happened, so nothing may be left changed. Without putting the
+      // target back, the guard at the top of this function rejected every later
+      // drag: one refusal and the card's only way out was gone for good, with
+      // no alert and no explanation.
+      pendingReturn.clear()
+      resumeTarget = target
     }
   }
 
   // MARK: - Pinning the cover on purpose
 
-  /// How far down a finger has to travel to pin the cover.
-  ///
   /// A ruler and not a clock, and the difference is worth the change. A timed
   /// hold makes the user commit before they know whether they were heard: iOS
   /// delivers nothing to this app for the first ~420ms of a relay, so a press
@@ -436,12 +623,25 @@ enum QuoteScreen {
   /// answers in the first millimetre, because the ring is following the thumb.
   ///
   /// It also splits the two intentions cleanly. Resting a finger PAUSES, for as
-  /// long as you like, and commits to nothing. Dragging KEEPS. Neither is a
-  /// timeout on the other.
+  /// long as you like, and commits to nothing. Dragging KEEPS, or leaves.
+  /// Neither is a timeout on the other.
   ///
-  /// Long enough that nobody pins the cover reaching for the screen, short
-  /// enough for one thumb travel.
-  private static let pinTravel: CGFloat = 120
+  /// The distances and the rule that reads them are in `CoverDrag`.
+
+  /// What the finger on the cover is asking for. The rule itself, and every
+  /// number in it, lives in `CoverDrag` where it can be tested.
+  private static var drag = CoverDrag()
+
+  /// The same reading, for the drag that LEAVES a cover already pinned.
+  ///
+  /// A second one rather than sharing, because `CoverView.touchesEnded` calls
+  /// `forgetHold` on a pinned cover too, and UIKit gives no order between that
+  /// callback and a recogniser's `.ended`. One shared reading made the exit work
+  /// or not depending on which arrived first.
+  private static var exitDrag = CoverDrag(canPin: false)
+
+  /// What was left on the clock when a finger stopped it.
+  private static var pausedLeft: TimeInterval = 0
 
   /// The badge on the live cover.
   ///
@@ -455,13 +655,6 @@ enum QuoteScreen {
   /// state for pinned.
   private static var isHolding = false
 
-  /// Where the finger was first SEEN, which on a warm relay is not where it
-  /// landed: the first ~420ms of the touch belong to the home screen. Measuring
-  /// from here rather than from an origin nobody observed is the honest
-  /// baseline, and it is the one the user's eye agrees with, because the ring
-  /// starts moving from the same instant.
-  private static var holdOrigin: CGPoint = .zero
-
   /// WHICH finger the origin belongs to. Weak, because UIKit owns the touch and
   /// recycles it once the gesture is over.
   private static weak var holdTouch: UITouch?
@@ -470,11 +663,17 @@ enum QuoteScreen {
   /// rather than at the moment the relay began. Why they are different, and why
   /// this is the honest one: `docs/native-notes.md`, "A countdown that cannot
   /// lie".
-  private static func startCountdown(_ seconds: TimeInterval, token: Int) {
+  /// `total` is what the countdown was to begin with, which differs from
+  /// `seconds` only when a relay is being resumed: the ring then picks the sweep
+  /// up part way through instead of starting it over.
+  private static func startCountdown(_ seconds: TimeInterval, of total: TimeInterval,
+                                     token: Int) {
     // A drain left over from the relay before this one would sweep the badge of
     // a cover it knows nothing about. Same staleness as the tick, same answer.
     guard gate.isCurrent(token), relayInFlight, !gate.locked, !isHolding else { return }
-    badge?.drain(over: seconds)
+    countdownDeadline = CACurrentMediaTime() + seconds
+    countdownTotal = total
+    badge?.drain(over: seconds, of: total)
   }
 
   /// A finger arrived on the cover: freeze the countdown, buzz, and start the
@@ -491,29 +690,23 @@ enum QuoteScreen {
     guard relayInFlight, !gate.locked, !isHolding, let badge else { return }
     isHolding = true
     holdTouch = touch
-    holdOrigin = point
+    drag.began(x: point.x, y: point.y)
+
+    // STOP THE CLOCK, rather than merely refusing to act on it. The gate holds
+    // the handoff back on its own, but the time would carry on being spent
+    // underneath, so a finger rested through the whole duration used to leave
+    // nothing to go back to. Restamping makes the tick already in flight a
+    // no-op; `fingerLeft` schedules a fresh one for what is left.
+    pausedLeft = remainingCountdown()
+    countdownDeadline = nil
+    gate.restamp()
 
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
     badge.hold()
   }
 
-  /// The finger is dragging. Travelling away from where it started closes the
-  /// pin; coming back towards it opens the pin again, which is how someone backs
-  /// out of a gesture they began by accident.
-  ///
-  /// EITHER WAY ALONG THE VERTICAL, and down is not privileged even though down
-  /// is the natural way to do it. A threshold measured only downwards is
-  /// unreachable from the bottom `pinTravel` points of the screen, because the
-  /// glass runs out before the distance does -- and that band is the thumb zone,
-  /// where a thumb rests when the phone is held in one hand. Worse than
-  /// unreachable, it is unrecoverable: `press` marks the relay due, so lifting
-  /// to try again from higher up hands off instead, and the user gets one
-  /// attempt whose success depends on where their thumb happened to land. The
-  /// ring would answer the drag, stall part closed, and read as a broken app.
-  ///
-  /// Only the vertical counts. Sideways means something on a cover that is
-  /// already pinned, and asking one axis to answer two questions is how a
-  /// thumb's natural arc ends up choosing for the user.
+  /// The finger is dragging. `CoverDrag` says what that means; this puts the
+  /// badge where the answer points and buzzes when a ring closes.
   ///
   /// Ignores any finger but the one that anchored the origin. `UIEvent`
   /// delivers touches in an unordered `Set`, so a second finger resting on the
@@ -522,10 +715,16 @@ enum QuoteScreen {
   /// made, pinning the cover with no travel at all.
   fileprivate static func fingerMoved(_ touch: UITouch?, to point: CGPoint) {
     guard isHolding, touch === holdTouch, !gate.locked, let badge else { return }
-    let closed = min(abs(point.y - holdOrigin.y) / pinTravel, 1)
-    badge.pinProgress(closed)
-    guard closed >= 1 else { return }
-    engageLock()
+    show(drag.moved(x: point.x, y: point.y), on: badge)
+  }
+
+  /// One reading, drawn. Shared by the hold and by the drag that leaves a cover
+  /// already pinned, which is the whole point of them being the same gesture.
+  private static func show(_ reading: CoverDrag.Reading, on badge: CoverChrome.Badge) {
+    if reading.changed { badge.showSkip(reading.gesture == .skipping) }
+    badge.pinProgress(reading.closed)
+    guard reading.justArmed else { return }
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
   }
 
   /// The finger left before the ring closed.
@@ -535,14 +734,51 @@ enum QuoteScreen {
   /// gesture. Lifting a finger that was not driving the hold is not this finger
   /// lifting: with two down, letting go of the passenger used to wipe the origin
   /// and unwind the ring under a thumb that had not moved.
-  private static func fingerLeft(_ touch: UITouch? = nil) {
+  private static func fingerLeft(_ touch: UITouch? = nil, cancelled: Bool = false) {
     if let touch, let holdTouch, touch !== holdTouch { return }
     let wasHolding = isHolding
+    // What the finger had promised, if anything. An open ring promises nothing,
+    // and NEITHER DOES A TOUCH THE SYSTEM TOOK AWAY. A call arriving, or a
+    // system gesture claiming the touch, is not the user deciding: acting on
+    // the armed gesture there pinned the cover, or launched the app, on an
+    // interruption they had no part in.
+    let promised = cancelled ? CoverDrag.Gesture.none : drag.promise
     forgetHold()
     // A pin outlives the finger that made it. Without this, lifting off a cover
     // that has just been pinned would wind the badge back to counting.
     guard wasHolding, !gate.locked else { return }
-    badge?.releaseHold()
+
+    switch promised {
+    case .pinning:
+      // No `releaseHold` first: `engageLock` puts the badge straight into its
+      // pinned state, and winding it back to a countdown on the way there is a
+      // frame of the cover claiming it is about to leave.
+      engageLock()
+    case .skipping:
+      badge?.releaseHold()
+      gate.proceed()
+    case .none:
+      badge?.releaseHold()
+      resumeAfterHold()
+    }
+  }
+
+  /// The finger came off with nothing asked for, so the relay goes back to
+  /// being a relay: the clock picks up where the press stopped it.
+  ///
+  /// The tick from before the hold is still in flight and is deliberately not
+  /// cancelled, only out-stamped. See `RelayGate.restamp`.
+  private static func resumeAfterHold() {
+    guard relayInFlight, !gate.locked, armedWork != nil else { return }
+    let token = gate.restamp()
+    guard pausedLeft > 0 else {
+      DispatchQueue.main.async { gate.durationElapsed(token) }
+      return
+    }
+    startCountdown(pausedLeft, of: countdownTotal, token: token)
+    DispatchQueue.main.asyncAfter(deadline: .now() + pausedLeft) {
+      gate.durationElapsed(token)
+    }
   }
 
   /// Everything the hold owns, put back to nothing, with no view involved.
@@ -565,8 +801,8 @@ enum QuoteScreen {
   /// only clear its own state; this clears the half that lives up here.
   private static func forgetHold() {
     isHolding = false
-    holdOrigin = .zero
     holdTouch = nil
+    drag.end()
   }
 
   /// The drag went the distance. From here nothing leaves on its own.
@@ -592,9 +828,12 @@ enum QuoteScreen {
     // only thing left saying the cover is pinned rather than merely slow.
     badge?.pinned()
 
-    let tap = UITapGestureRecognizer(target: Proxy.shared, action: #selector(Proxy.proceedFromLock))
-    tap.cancelsTouchesInView = false
-    root.addGestureRecognizer(tap)
+    // A DRAG AND NOTHING ELSE. There used to be a tap here as well, and it was
+    // the one way out of this cover that cost nothing: pinning is a deliberate
+    // act, taken to stop the screen moving, and a stray thumb undoing it threw
+    // the user into the app they had just refused. It is also the only gesture
+    // in the whole cover that acted with no ring behind it. The button at the
+    // bottom is still there for anyone who wants a target to aim at.
     let drag = UIPanGestureRecognizer(target: Proxy.shared,
                                       action: #selector(Proxy.proceedFromLock(_:)))
     drag.cancelsTouchesInView = false
@@ -618,24 +857,47 @@ enum QuoteScreen {
     dismiss()
   }
 
-  /// A tap on the pinned cover, or a drag to the right: go where the widget row
-  /// was pointing all along.
+  /// A sideways drag on the pinned cover: go where the widget row was pointing
+  /// all along.
   ///
-  /// A tap that lands on one of the controls is not this. `copy`, `share` and
-  /// the button all sit in front and would otherwise be unreachable, since the
-  /// recogniser is on the view behind them.
+  /// The tap that used to do this as well is gone. See `engageLock`.
   fileprivate static func proceedFromLock(_ recognizer: UIGestureRecognizer) {
-    guard gate.locked, let root = window?.rootViewController?.view else { return }
-    if recognizer is UITapGestureRecognizer {
-      if root.hitTest(recognizer.location(in: root), with: nil) is UIControl { return }
-    } else if !draggedSideways(recognizer) {
+    guard gate.locked, let pan = recognizer as? UIPanGestureRecognizer,
+          let badge else { return }
+    let moved = pan.translation(in: pan.view)
+
+    switch pan.state {
+    case .began:
+      exitDrag.began(x: 0, y: 0)
+      return
+    case .changed:
+      // The rings were retired when the cover pinned; `pinProgress` brings them
+      // back. THE WAY OUT HAS THE SHAPE OF THE WAY IN, which is the only reason
+      // anyone would guess it exists: the same arrow, the same ring, the same
+      // distance as skipping ahead from a cover that was merely held.
+      show(exitDrag.moved(x: moved.x, y: moved.y), on: badge)
+      return
+
+    case .ended:
+      let promised = exitDrag.promise
+      exitDrag.end()
+      guard promised == .skipping else {
+        // Not far enough. Back to being pinned, exactly as it was.
+        badge.pinned()
+        return
+      }
+
+    default:
+      exitDrag.end()
+      badge.pinned()
       return
     }
+
     gate.proceed()
-    // `proceed` unlocks, and the tap that triggered it is still on its way to
-    // `touchesEnded`. Without forgetting the hold first, that trailing lift
-    // finds the gate unlocked and winds the badge back to a full countdown as
-    // the app leaves.
+    // `proceed` unlocks, and the touches that drove this drag are still on
+    // their way to `touchesEnded`. Without forgetting the hold first, that
+    // trailing lift finds the gate unlocked and winds the badge back to a full
+    // countdown as the app leaves.
     forgetHold()
     // The handoff `proceed` fires records the return like any other, and it is
     // LEFT ALONE on purpose.
@@ -887,10 +1149,17 @@ enum QuoteScreen {
   /// off switch never charging for itself.
   static func scheduleOpen(after seconds: TimeInterval, target: URL,
                            _ open: @escaping () -> Void) {
-    let token = gate.arm {
+    let work = {
       recordHandoff(target: target)
       open()
     }
+    armedWork = work
+    // Known from here rather than from where the clock starts, because a finger
+    // can land before the clock does and `remainingCountdown` has to be able to
+    // say how much is owed even then.
+    countdownTotal = seconds
+    countdownDeadline = nil
+    let token = gate.arm(work)
     guard seconds > 0 else {
       DispatchQueue.main.async { gate.durationElapsed(token) }
       return
@@ -922,7 +1191,7 @@ enum QuoteScreen {
 
   private static func countDown(_ seconds: TimeInterval, token: Int) {
     guard UIApplication.shared.applicationState != .active else {
-      startCountdown(seconds, token: token)
+      startCountdown(seconds, of: seconds, token: token)
       DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { gate.durationElapsed(token) }
       return
     }
@@ -943,7 +1212,7 @@ enum QuoteScreen {
       // delivery starts. That alignment is the feature: a ring that is moving
       // is a cover that can be caught.
       DispatchQueue.main.asyncAfter(deadline: .now() + touchSettleDelay) {
-        startCountdown(seconds, token: token)
+        startCountdown(seconds, of: seconds, token: token)
       }
       DispatchQueue.main.asyncAfter(deadline: .now() + touchSettleDelay + seconds) {
         gate.durationElapsed(token)
@@ -1013,7 +1282,12 @@ enum QuoteScreen {
         // Symmetrically, and for the same reason: the finger this route exists
         // to hear is one `CoverView` never gets a `touchesEnded` for either.
         // Nil, because this branch means every finger is off the glass.
-        QuoteScreen.fingerLeft()
+        //
+        // And it is the ONE route that can see a finger the view cannot, so a
+        // cancellation reaching only here would otherwise be read as a decision:
+        // a call arriving mid-drag pinned the cover or launched the target.
+        let taken = touches.contains { $0.phase == .cancelled }
+        QuoteScreen.fingerLeft(cancelled: taken)
       }
     }
   }
@@ -1083,11 +1357,11 @@ enum QuoteScreen {
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
       super.touchesCancelled(touches, with: event)
       guard !stillDown(besides: touches, in: event) else {
-        touches.forEach { QuoteScreen.fingerLeft($0) }
+        touches.forEach { QuoteScreen.fingerLeft($0, cancelled: true) }
         return
       }
       QuoteScreen.gate.cancelPress()
-      touches.forEach { QuoteScreen.fingerLeft($0) }
+      touches.forEach { QuoteScreen.fingerLeft($0, cancelled: true) }
     }
   }
 
@@ -1150,9 +1424,13 @@ enum QuoteScreen {
         let point = recognizer.location(in: recognizer.view)
         QuoteScreen.fingerLanded(nil, at: point)
         QuoteScreen.fingerMoved(nil, to: point)
-      case .ended, .cancelled, .failed:
+      case .ended:
         QuoteScreen.gate.release()
         QuoteScreen.fingerLeft()
+      case .cancelled, .failed:
+        // Taken away rather than lifted, so it decides nothing.
+        QuoteScreen.gate.release()
+        QuoteScreen.fingerLeft(cancelled: true)
       default:
         break
       }
